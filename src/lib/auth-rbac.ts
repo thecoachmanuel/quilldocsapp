@@ -20,6 +20,109 @@ export interface SessionWithRBAC {
 }
 
 /**
+ * Ensures a database User record exists matching the authenticated Kinde user.
+ * Gracefully handles Kinde ID reassignments, email changes, and auto-links existing records
+ * to prevent duplicate key / unique constraint violations in MongoDB.
+ */
+export async function ensureDbUser(kindeUser: {
+  id: string;
+  email?: string | null;
+  given_name?: string | null;
+  family_name?: string | null;
+}) {
+  if (!kindeUser || !kindeUser.id) return null;
+
+  const email = (kindeUser.email || `${kindeUser.id}@kinde.user`)
+    .toLowerCase()
+    .trim();
+  const fullName =
+    [kindeUser.given_name, kindeUser.family_name]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || email.split("@")[0];
+
+  try {
+    // 1. Direct match by Kinde user ID
+    let dbUser = await db.user.findFirst({
+      where: { id: kindeUser.id },
+    });
+
+    if (dbUser) {
+      return dbUser;
+    }
+
+    // 2. Lookup by email (handles new Kinde project / ID changes gracefully)
+    const existingByEmail = await db.user.findFirst({
+      where: { email },
+    });
+
+    if (existingByEmail) {
+      // Re-link previous records (files, messages) to new Kinde ID
+      try {
+        await db.file.updateMany({
+          where: { userId: existingByEmail.id },
+          data: { userId: kindeUser.id },
+        });
+        await db.message.updateMany({
+          where: { userId: existingByEmail.id },
+          data: { userId: kindeUser.id },
+        });
+        await db.user.delete({
+          where: { id: existingByEmail.id },
+        });
+      } catch (migrationErr) {
+        console.warn("[ensureDbUser] Record relinking notice:", migrationErr);
+      }
+
+      return await db.user.create({
+        data: {
+          id: kindeUser.id,
+          email,
+          name: existingByEmail.name || fullName,
+          role: existingByEmail.role || "USER",
+          status: existingByEmail.status || "ACTIVE",
+          stripeCustomerId: existingByEmail.stripeCustomerId || null,
+          stripeSubscriptionId: existingByEmail.stripeSubscriptionId || null,
+          stripePriceId: existingByEmail.stripePriceId || null,
+          stripeCurrentPeriodEnd: existingByEmail.stripeCurrentPeriodEnd || null,
+        },
+      });
+    }
+
+    // 3. Brand new user
+    const adminEmails = (
+      process.env.ADMIN_EMAILS ||
+      "manueloliver2908@gmail.com,olaitanadewale2016@gmail.com"
+    )
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    const isWhiteListedAdmin = adminEmails.includes(email);
+    const anyAdminExists = await db.user.findFirst({
+      where: { role: "ADMIN" },
+    });
+    const initialRole: UserRole =
+      isWhiteListedAdmin || !anyAdminExists ? "ADMIN" : "USER";
+
+    return await db.user.create({
+      data: {
+        id: kindeUser.id,
+        email,
+        name: fullName,
+        role: initialRole,
+        status: "ACTIVE",
+      },
+    });
+  } catch (err: any) {
+    console.error("[ensureDbUser] Error ensuring DB user:", err);
+    return await db.user.findFirst({
+      where: { OR: [{ id: kindeUser.id }, { email }] },
+    });
+  }
+}
+
+/**
  * Resolves the current user's Kinde session, Kinde roles/permissions,
  * and synchronizes role-based access control (RBAC) with the database.
  */
@@ -101,31 +204,10 @@ export async function getUserSessionWithRBAC(): Promise<SessionWithRBAC> {
 
     const isEnvAdmin = adminEmailsEnv.includes(email);
 
-    // 3. Synchronize with Database User record
-    let dbUser = await db.user.findFirst({
-      where: { id: user.id },
-    });
+    // 3. Synchronize with Database User record via safe ensureDbUser
+    let dbUser = await ensureDbUser(user);
 
-    // Check if any admin exists in the database at all (auto-bootstrap first owner)
-    const existingAdmin = await db.user.findFirst({
-      where: { role: "ADMIN" },
-    });
-
-    const shouldAutoPromote =
-      hasKindeAdminClaim || isEnvAdmin || !existingAdmin;
-
-    if (!dbUser) {
-      const initialRole: UserRole = shouldAutoPromote ? "ADMIN" : "USER";
-      dbUser = await db.user.create({
-        data: {
-          id: user.id,
-          email,
-          name: fullName,
-          role: initialRole,
-          status: "ACTIVE",
-        },
-      });
-    } else {
+    if (dbUser) {
       const updates: Record<string, any> = {};
       if (!dbUser.name && fullName) {
         updates.name = fullName;
@@ -133,17 +215,15 @@ export async function getUserSessionWithRBAC(): Promise<SessionWithRBAC> {
       if ((hasKindeAdminClaim || isEnvAdmin) && dbUser.role !== "ADMIN") {
         updates.role = "ADMIN";
       }
-      if (!dbUser.role) {
-        updates.role = shouldAutoPromote ? "ADMIN" : "USER";
-      }
-      if (!dbUser.status) {
-        updates.status = "ACTIVE";
-      }
       if (Object.keys(updates).length > 0) {
-        dbUser = await db.user.update({
-          where: { id: user.id },
-          data: updates,
-        });
+        try {
+          dbUser = await db.user.update({
+            where: { id: dbUser.id },
+            data: updates,
+          });
+        } catch (updateErr) {
+          console.warn("[auth-rbac] Notice updating user attributes:", updateErr);
+        }
       }
     }
 

@@ -1,6 +1,7 @@
 import DocumentViewLayout from "@/app/components/DocumentViewLayout";
 import { db } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
+import { ensureDbUser } from "@/lib/auth-rbac";
 import { notFound, redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -37,18 +38,7 @@ async function Page({ params }: PageProps) {
     redirect(`/api/auth/login?post_login_redirect_url=/dashboard/${fileId}`);
   }
 
-  let dbUser = await db.user.findFirst({
-    where: { id: user.id },
-  });
-
-  if (!dbUser) {
-    await db.user.create({
-      data: {
-        id: user.id,
-        email: user.email || `${user.id}@kinde.user`,
-      },
-    });
-  }
+  await ensureDbUser(user);
   const file = await db.file.findFirst({
     where: {
       id: fileId,

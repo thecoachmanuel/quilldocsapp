@@ -103,71 +103,104 @@ const UploadDropZone = ({
         setIsUploading(true);
         const progressInterval = startSimulatedProgress();
 
-        // 1. Attempt local upload first
-        try {
-          const formData = new FormData();
-          formData.append("file", acceptedFile[0]);
+        const isLocalhost =
+          typeof window !== "undefined" &&
+          (window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1");
 
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-          });
+        // 1. Only attempt local disk upload when developing locally on localhost
+        if (isLocalhost) {
+          try {
+            const formData = new FormData();
+            formData.append("file", acceptedFile[0]);
 
-          if (res.ok) {
-            const data = await res.json();
-            if (data.file?.id) {
-              clearInterval(progressInterval);
-              setUploadProgress(100);
-              await utils.getUserFiles.invalidate();
-              router.refresh();
-              if (closeDialog) closeDialog();
-              router.push(`/dashboard/${data.file.id}`);
-              return;
+            const res = await fetch("/api/upload", {
+              method: "POST",
+              body: formData,
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data.file?.id) {
+                clearInterval(progressInterval);
+                setUploadProgress(100);
+                await utils.getUserFiles.invalidate();
+                router.refresh();
+                if (closeDialog) closeDialog();
+                router.push(`/dashboard/${data.file.id}`);
+                return;
+              }
+            } else {
+              const errData = await res.json().catch(() => ({}));
+              // Only abort if it's an intentional user quota / plan limit rejection:
+              if (
+                res.status === 403 ||
+                errData.quotaExceeded ||
+                errData.pagesExceeded ||
+                errData.fileSizeExceeded
+              ) {
+                clearInterval(progressInterval);
+                setIsUploading(false);
+                return toast({
+                  title: "Upload Rejected",
+                  description:
+                    errData.error ||
+                    "Failed to upload document within current plan limits.",
+                  variant: "destructive",
+                });
+              }
+              // If it was a filesystem / server error, seamlessly fall through to UploadThing!
             }
-          } else {
-            const errData = await res.json().catch(() => ({}));
+          } catch (localErr) {
+            console.warn(
+              "Local upload notice, falling back to UploadThing:",
+              localErr
+            );
+          }
+        }
+
+        // 2. Cloud Upload via UploadThing (Primary for Vercel & Production)
+        try {
+          const res = await startUpload(acceptedFile);
+          if (!res) {
             clearInterval(progressInterval);
             setIsUploading(false);
             return toast({
-              title: "Upload Rejected",
+              title: "Upload failed",
               description:
-                errData.error ||
-                "Failed to upload document within current plan limits.",
+                "Please check your file and plan limits, then try again",
               variant: "destructive",
             });
           }
-        } catch (localErr) {
-          console.warn("Local upload error:", localErr);
-        }
 
-        // 2. Fall back to UploadThing if configured
-        const res = await startUpload(acceptedFile);
-        if (!res) {
+          const [fileResponse] = res;
+          const key = fileResponse?.key;
+
+          if (!key) {
+            clearInterval(progressInterval);
+            setIsUploading(false);
+            return toast({
+              title: "Upload failed",
+              description: "Please try again later",
+              variant: "destructive",
+            });
+          }
+
+          clearInterval(progressInterval);
+          setUploadProgress(100);
+          startPolling({ key });
+        } catch (uploadThingErr: any) {
           clearInterval(progressInterval);
           setIsUploading(false);
+          console.error("UploadThing error:", uploadThingErr);
           return toast({
             title: "Upload failed",
-            description: "Please check your file and plan limits, then try again",
+            description:
+              uploadThingErr?.message ||
+              "Please check your file and network connection, then try again",
             variant: "destructive",
           });
         }
-
-        const [fileResponse] = res;
-        const key = fileResponse?.key;
-
-        if (!key) {
-          clearInterval(progressInterval);
-          setIsUploading(false);
-          return toast({
-            title: "Upload failed",
-            description: "Please try again later",
-            variant: "destructive",
-          });
-        }
-
-        clearInterval(progressInterval);
-        setUploadProgress(100);
-        startPolling({ key });
       }}
     >
       {({ getRootProps, getInputProps, acceptedFiles }) => (

@@ -6,6 +6,19 @@ import { PLANS } from "@/config/stripe";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { parseDocument } from "@/lib/document-parser";
 
+if (process.env.UPLOADTHING_SECRET) {
+  process.env.UPLOADTHING_SECRET = process.env.UPLOADTHING_SECRET.replace(
+    /^['"]|['"]$/g,
+    ""
+  ).trim();
+}
+if (process.env.UPLOADTHING_APP_ID) {
+  process.env.UPLOADTHING_APP_ID = process.env.UPLOADTHING_APP_ID.replace(
+    /^['"]|['"]$/g,
+    ""
+  ).trim();
+}
+
 const f = createUploadthing();
 
 const middleware = async () => {

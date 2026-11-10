@@ -138,6 +138,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (process.env.VERCEL) {
+      return NextResponse.json(
+        {
+          error:
+            "Local disk storage is not available in serverless Vercel environments.",
+          useCloud: true,
+        },
+        { status: 501 }
+      );
+    }
+
     const uploadsDir = path.join(process.cwd(), "public", "uploads");
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });

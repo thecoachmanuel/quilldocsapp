@@ -1,4 +1,5 @@
 import { getKindeServerSession } from "@/lib/kinde";
+import { ensureDbUser } from "@/lib/auth-rbac";
 import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { db } from "@/db";
 import { getUserSubscriptionPlan } from "@/lib/stripe";
@@ -25,6 +26,8 @@ const middleware = async () => {
   const { getUser } = getKindeServerSession();
   const user = await getUser();
   if (!user || !user.id) throw new Error("Unauthorized");
+
+  await ensureDbUser(user);
 
   const subscriptionPlan = await getUserSubscriptionPlan();
   const plan = subscriptionPlan.isSubscribed ? PLANS[1] : PLANS[0];

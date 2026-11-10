@@ -1,11 +1,14 @@
 import { getKindeServerSession } from "@/lib/kinde";
 import { db } from "@/db";
+import { ensureDbUser } from "@/lib/auth-rbac";
 import { getUserSubscriptionPlan } from "@/lib/stripe";
-import { PLANS } from "@/config/stripe";
+import { saveDocumentBuffer } from "@/lib/document-storage";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,6 +18,9 @@ export async function POST(req: NextRequest) {
     if (!user || !user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Ensure database user record is active and linked to current Kinde session
+    await ensureDbUser(user);
 
     const dbUser = await db.user.findFirst({ where: { id: user.id } });
     if (dbUser?.status === "SUSPENDED") {
@@ -138,44 +144,42 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (process.env.VERCEL) {
-      return NextResponse.json(
-        {
-          error:
-            "Local disk storage is not available in serverless Vercel environments.",
-          useCloud: true,
-        },
-        { status: 501 }
-      );
-    }
-
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const filename = `${fileId}_${safeName}`;
-    const filepath = path.join(uploadsDir, filename);
+    const fileUrl = `/api/files/${fileId}/${encodeURIComponent(safeName)}`;
 
-    await fs.promises.writeFile(filepath, buffer);
+    // 4. Save file chunks into MongoDB Atlas (Reliable across localhost and Vercel serverless)
+    await saveDocumentBuffer(fileId, buffer);
 
+    // Optional local disk cache for fast local dev loading
+    try {
+      const uploadsDir = path.join(process.cwd(), "public", "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      const filename = `${fileId}_${safeName}`;
+      const filepath = path.join(uploadsDir, filename);
+      await fs.promises.writeFile(filepath, buffer);
+    } catch {
+      // Ignored on read-only environments like Vercel
+    }
+
+    // 5. Create database file record
     const createdFile = await db.file.create({
       data: {
         id: fileId,
         key: fileId,
         name: file.name,
         userId: user.id,
-        url: `/uploads/${filename}`,
+        url: fileUrl,
         uploadStatus: "PROCESSING",
       },
     });
 
-    // Vectorize document in Pinecone with 1536-dimensional embeddings
+    // 6. Vectorize document into Pinecone asynchronously
     vectorizeAndIndexDocument({
       fileId: createdFile.id,
-      fileUrl: `/uploads/${filename}`,
+      fileUrl: fileUrl,
       fileName: file.name,
     }).catch((err) => {
       console.error("[upload/route] Vectorization error:", err);
@@ -191,7 +195,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: any) {
-    console.error("Local file upload error:", error);
+    console.error("[upload/route] File upload error:", error);
     return NextResponse.json(
       { error: error?.message || "File upload failed" },
       { status: 500 }

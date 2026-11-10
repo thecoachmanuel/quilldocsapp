@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
 import { parseDocument, getFileType } from "@/lib/document-parser";
+import { getDocumentBuffer } from "@/lib/document-storage";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -41,16 +42,32 @@ export async function GET(req: NextRequest) {
     const fileType = getFileType(file.name || file.url);
 
     if (raw) {
-      let buffer: Buffer;
-      if (file.url.startsWith("http://") || file.url.startsWith("https://")) {
-        const res = await fetch(file.url);
-        if (!res.ok) throw new Error("Failed to fetch file from source");
-        const ab = await res.arrayBuffer();
-        buffer = Buffer.from(ab);
-      } else {
-        const relPath = file.url.startsWith("/") ? file.url.slice(1) : file.url;
-        const fullPath = path.join(process.cwd(), "public", relPath);
-        buffer = await fs.promises.readFile(fullPath);
+      let buffer: Buffer | null = await getDocumentBuffer(file.id);
+
+      if (!buffer && file.key && file.key !== file.id) {
+        buffer = await getDocumentBuffer(file.key);
+      }
+
+      if (!buffer) {
+        if (file.url.startsWith("http://") || file.url.startsWith("https://")) {
+          const res = await fetch(file.url);
+          if (!res.ok) throw new Error("Failed to fetch file from source");
+          const ab = await res.arrayBuffer();
+          buffer = Buffer.from(ab);
+        } else {
+          const relPath = file.url.startsWith("/") ? file.url.slice(1) : file.url;
+          const fullPath = path.join(process.cwd(), "public", relPath);
+          if (fs.existsSync(fullPath)) {
+            buffer = await fs.promises.readFile(fullPath);
+          }
+        }
+      }
+
+      if (!buffer) {
+        return NextResponse.json(
+          { error: "Document content not found" },
+          { status: 404 }
+        );
       }
 
       let contentType = "application/octet-stream";
@@ -73,6 +90,7 @@ export async function GET(req: NextRequest) {
     }
 
     const parsed = await parseDocument(file.url);
+
 
     return NextResponse.json({
       success: true,

@@ -16,6 +16,8 @@ if (process.env.UPLOADTHING_APP_ID) {
 }
 
 // Export routes for Next App Router
+export const runtime = "nodejs";
+
 export const { GET, POST } = createNextRouteHandler({
   router: ourFileRouter,
 });

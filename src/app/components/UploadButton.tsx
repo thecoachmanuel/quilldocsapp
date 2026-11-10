@@ -32,9 +32,16 @@ const UploadDropZone = ({
 
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadThingError, setUploadThingError] = useState<string | null>(null);
   const { toast } = useToast();
   const { startUpload } = useUploadThing(
-    isSubscribed ? "proPlanUploader" : "freePlanUploader"
+    isSubscribed ? "proPlanUploader" : "freePlanUploader",
+    {
+      onUploadError: (err) => {
+        console.error("[UploadThing] Error:", err);
+        setUploadThingError(err.message || "UploadThing upload failed");
+      },
+    }
   );
 
   const { mutate: startPolling } = trpc.getFile.useMutation({
@@ -103,72 +110,71 @@ const UploadDropZone = ({
         setIsUploading(true);
         const progressInterval = startSimulatedProgress();
 
-        const isLocalhost =
-          typeof window !== "undefined" &&
-          (window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1");
+        // 1. Primary Direct Cloud Upload via MongoDB Atlas (Ultra-reliable, zero 3rd-party filehost dependencies)
+        try {
+          const formData = new FormData();
+          formData.append("file", acceptedFile[0]);
 
-        // 1. Only attempt local disk upload when developing locally on localhost
-        if (isLocalhost) {
-          try {
-            const formData = new FormData();
-            formData.append("file", acceptedFile[0]);
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
 
-            const res = await fetch("/api/upload", {
-              method: "POST",
-              body: formData,
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              if (data.file?.id) {
-                clearInterval(progressInterval);
-                setUploadProgress(100);
-                await utils.getUserFiles.invalidate();
-                router.refresh();
-                if (closeDialog) closeDialog();
-                router.push(`/dashboard/${data.file.id}`);
-                return;
-              }
-            } else {
-              const errData = await res.json().catch(() => ({}));
-              // Only abort if it's an intentional user quota / plan limit rejection:
-              if (
-                res.status === 403 ||
-                errData.quotaExceeded ||
-                errData.pagesExceeded ||
-                errData.fileSizeExceeded
-              ) {
-                clearInterval(progressInterval);
-                setIsUploading(false);
-                return toast({
-                  title: "Upload Rejected",
-                  description:
-                    errData.error ||
-                    "Failed to upload document within current plan limits.",
-                  variant: "destructive",
-                });
-              }
-              // If it was a filesystem / server error, seamlessly fall through to UploadThing!
+          if (res.ok) {
+            const data = await res.json();
+            if (data.file?.id) {
+              clearInterval(progressInterval);
+              setUploadProgress(100);
+              await utils.getUserFiles.invalidate();
+              router.refresh();
+              if (closeDialog) closeDialog();
+              router.push(`/dashboard/${data.file.id}`);
+              return;
             }
-          } catch (localErr) {
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            // Only halt if it's an intentional user quota / plan limit / validation rejection:
+            if (
+              res.status === 400 ||
+              res.status === 403 ||
+              errData.quotaExceeded ||
+              errData.pagesExceeded ||
+              errData.fileSizeExceeded
+            ) {
+              clearInterval(progressInterval);
+              setIsUploading(false);
+              return toast({
+                title: "Upload Rejected",
+                description:
+                  errData.error ||
+                  "Failed to upload document within current plan limits.",
+                variant: "destructive",
+              });
+            }
             console.warn(
-              "Local upload notice, falling back to UploadThing:",
-              localErr
+              "Direct storage notice, attempting UploadThing secondary fallback:",
+              errData
             );
           }
+        } catch (directErr) {
+          console.warn(
+            "Direct storage error, falling back to UploadThing:",
+            directErr
+          );
         }
 
-        // 2. Cloud Upload via UploadThing (Primary for Vercel & Production)
+        // 2. Secondary Cloud Upload via UploadThing (Fallback)
         try {
+          setUploadThingError(null);
           const res = await startUpload(acceptedFile);
           if (!res) {
             clearInterval(progressInterval);
             setIsUploading(false);
             return toast({
-              title: "Upload failed",
+              title: "Upload Failed",
               description:
-                "Please check your file and plan limits, then try again",
+                uploadThingError ||
+                "Upload failed. Please check your document size and plan limits, then try again.",
               variant: "destructive",
             });
           }
@@ -180,8 +186,8 @@ const UploadDropZone = ({
             clearInterval(progressInterval);
             setIsUploading(false);
             return toast({
-              title: "Upload failed",
-              description: "Please try again later",
+              title: "Upload Failed",
+              description: "Could not generate file key. Please try again later.",
               variant: "destructive",
             });
           }
@@ -194,7 +200,7 @@ const UploadDropZone = ({
           setIsUploading(false);
           console.error("UploadThing error:", uploadThingErr);
           return toast({
-            title: "Upload failed",
+            title: "Upload Failed",
             description:
               uploadThingErr?.message ||
               "Please check your file and network connection, then try again",

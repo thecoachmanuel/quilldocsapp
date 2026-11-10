@@ -1199,7 +1199,27 @@ export async function parseDocument(fileUrl: string): Promise<ParsedDocument> {
   const fileType = getFileType(fileUrl);
   let buffer: Buffer;
 
-  if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) {
+  if (fileUrl.startsWith("/api/files/")) {
+    const rawId = fileUrl
+      .replace("/api/files/", "")
+      .split("/")[0]
+      ?.split("?")[0];
+    const { getDocumentBuffer } = await import("./document-storage");
+    const stored = await getDocumentBuffer(rawId);
+    if (stored) {
+      buffer = stored;
+    } else {
+      const baseUrl =
+        process.env.KINDE_SITE_URL ||
+        (process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
+          : "http://localhost:3000");
+      const res = await fetch(`${baseUrl}${fileUrl}`);
+      if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
+      const ab = await res.arrayBuffer();
+      buffer = Buffer.from(ab);
+    }
+  } else if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) {
     const res = await fetch(fileUrl);
     if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
     const ab = await res.arrayBuffer();
@@ -1207,7 +1227,14 @@ export async function parseDocument(fileUrl: string): Promise<ParsedDocument> {
   } else {
     const cleanPath = fileUrl.startsWith("/") ? fileUrl.slice(1) : fileUrl;
     const fullPath = path.join(process.cwd(), "public", cleanPath);
-    buffer = await fs.promises.readFile(fullPath);
+    if (fs.existsSync(fullPath)) {
+      buffer = await fs.promises.readFile(fullPath);
+    } else {
+      const { getDocumentBuffer } = await import("./document-storage");
+      const stored = await getDocumentBuffer(cleanPath);
+      if (!stored) throw new Error(`File not found: ${fileUrl}`);
+      buffer = stored;
+    }
   }
 
   let result: ParsedDocument;

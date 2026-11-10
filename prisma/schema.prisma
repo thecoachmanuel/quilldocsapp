@@ -98,3 +98,14 @@ model ContactInfo {
   hours     String   @default("Monday - Friday: 9:00 AM - 6:00 PM (UTC+1)")
   updatedAt DateTime @updatedAt
 }
+
+model DocumentChunk {
+  id        String   @id @default(cuid()) @map("_id")
+  fileId    String
+  index     Int
+  data      String
+  createdAt DateTime @default(now())
+
+  @@index([fileId, index])
+}
+

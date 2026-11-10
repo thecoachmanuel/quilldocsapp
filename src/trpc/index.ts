@@ -25,6 +25,7 @@ import {
 } from "@/lib/paystack";
 import { pinecone, isPineconeConfigured } from "@/lib/pinecone";
 import { isAiConfigured } from "@/lib/ai";
+import { deleteDocumentBuffer } from "@/lib/document-storage";
 import fs from "fs";
 import path from "path";
 
@@ -283,6 +284,9 @@ export const appRouter = router({
           id: input.id,
         },
       });
+
+      // Clear chunked document storage from MongoDB
+      await deleteDocumentBuffer(input.id);
 
       if (isPineconeConfigured) {
         try {

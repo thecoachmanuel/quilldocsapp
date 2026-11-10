@@ -1,0 +1,100 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id     String  @id @map("_id")
+  email  String  @unique
+  name   String?
+  role   String  @default("USER")
+  status String  @default("ACTIVE")
+
+  File    File[]
+  Message Message[]
+
+  stripeCustomerId       String?   @map("stripe_customer_id")
+  stripeSubscriptionId   String?   @map("stripe_subscription_id")
+  stripePriceId          String?   @map("stripe_price_id")
+  stripeCurrentPeriodEnd DateTime? @map("stripe_current_period_end")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  FAILED
+  SUCCESS
+}
+
+model File {
+  id           String       @id @default(cuid()) @map("_id")
+  name         String
+  uploadStatus UploadStatus @default(PENDING)
+  url          String
+  key          String
+  messages     Message[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  User   User?   @relation(fields: [userId], references: [id])
+  userId String?
+}
+
+model Message {
+  id            String  @id @default(cuid()) @map("_id")
+  text          String
+  isUserMessage Boolean
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  User      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  File      File?    @relation(fields: [fileId], references: [id])
+  fileId    String?
+}
+
+model PlanConfig {
+  id            String   @id @default(cuid()) @map("_id")
+  slug          String   @unique
+  name          String
+  tagline       String?
+  price         Float    @default(0)
+  priceNgn      Float?   @default(0)
+  quota         Int      @default(10)
+  pagesPerPdf   Int      @default(5)
+  maxFileSizeMB Int      @default(4)
+  features      String[]
+  isPopular     Boolean  @default(false)
+  stripePriceId String?
+  updatedAt     DateTime @updatedAt
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid()) @map("_id")
+  name      String
+  email     String
+  subject   String?
+  message   String
+  status    String   @default("UNREAD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ContactInfo {
+  id        String   @id @default("default") @map("_id")
+  email     String   @default("support@quilldocs.com")
+  phone     String   @default("+2347038587375")
+  address   String   @default("Lagos, Nigeria")
+  hours     String   @default("Monday - Friday: 9:00 AM - 6:00 PM (UTC+1)")
+  updatedAt DateTime @updatedAt
+}

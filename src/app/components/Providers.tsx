@@ -1,0 +1,37 @@
+"use client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PropsWithChildren, useState } from "react";
+import { trpc } from "../_trpc/client";
+import { httpBatchLink } from "@trpc/client";
+import { absoluteUrl } from "@/lib/utils";
+const Providers = ({ children }: PropsWithChildren) => {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnMount: "always",
+            refetchOnWindowFocus: true,
+            staleTime: 0,
+          },
+        },
+      })
+  );
+  const [trpcClient] = useState(() =>
+    trpc.createClient({
+      links: [
+        httpBatchLink({
+          url: absoluteUrl("/api/trpc"),
+        }),
+      ],
+    })
+  );
+
+  return (
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </trpc.Provider>
+  );
+};
+
+export default Providers;

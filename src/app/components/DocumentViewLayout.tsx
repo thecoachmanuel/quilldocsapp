@@ -51,9 +51,9 @@ export default function DocumentViewLayout({
       : undefined;
 
   return (
-    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
+    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] w-full max-w-full overflow-x-hidden lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
       {/* Mobile Quick Bar - Compact sticky header for fast document/chat control */}
-      <div className="lg:hidden flex items-center justify-between px-2.5 py-1.5 bg-white/95 backdrop-blur border-b border-zinc-200 sticky top-14 z-30">
+      <div className="lg:hidden flex items-center justify-between px-2.5 py-1.5 bg-white/95 backdrop-blur border-b border-zinc-200 sticky top-14 z-30 w-full max-w-full">
         <div className="flex items-center gap-1.5 min-w-0 pr-2">
           <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
           <span className="text-xs font-medium text-zinc-800 truncate">
@@ -80,15 +80,15 @@ export default function DocumentViewLayout({
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-8xl flex-1 min-h-0 lg:flex lg:overflow-hidden xl:px-2">
+      <div className="mx-auto w-full max-w-full lg:max-w-8xl flex-1 min-h-0 overflow-x-hidden lg:flex lg:overflow-hidden xl:px-2">
         {/* Left Side: Document / Slide Viewer */}
         <div
           className={cn(
-            "flex-1 xl:flex min-w-0 lg:h-full lg:overflow-y-auto transition-all duration-200",
+            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-hidden lg:h-full lg:overflow-y-auto transition-all duration-200",
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="px-0.5 py-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full">
+          <div className="p-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-hidden">
             <DocumentRenderer fileId={fileId} url={url} fileName={fileName} />
           </div>
         </div>

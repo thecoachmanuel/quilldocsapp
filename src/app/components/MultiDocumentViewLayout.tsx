@@ -191,12 +191,12 @@ export default function MultiDocumentViewLayout({
   }, [allUserFiles, modalSearchQuery]);
 
   return (
-    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
+    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] w-full max-w-full overflow-x-hidden lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
       {/* Top Document Tab Navigation Bar */}
-      <div className="bg-white/95 backdrop-blur border-b border-zinc-200 shrink-0 z-30 px-3 sm:px-6 py-1.5">
+      <div className="bg-white/95 backdrop-blur border-b border-zinc-200 shrink-0 z-30 px-3 sm:px-6 py-1.5 w-full max-w-full overflow-x-hidden">
         <div className="flex items-center justify-between gap-2">
           {/* Document Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400 mr-1 shrink-0">
               <Layers className="h-3 w-3 text-blue-600" />
               Sources ({selectedFiles.length}):
@@ -266,15 +266,15 @@ export default function MultiDocumentViewLayout({
       </div>
 
       {/* Main Workspace Layout */}
-      <div className="mx-auto w-full max-w-8xl flex-1 min-h-0 lg:flex lg:overflow-hidden xl:px-2">
+      <div className="mx-auto w-full max-w-full lg:max-w-8xl flex-1 min-h-0 overflow-x-hidden lg:flex lg:overflow-hidden xl:px-2">
         {/* Left Side: Document Renderer */}
         <div
           className={cn(
-            "flex-1 xl:flex min-w-0 lg:h-full lg:overflow-y-auto transition-all duration-200",
+            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-hidden lg:h-full lg:overflow-y-auto transition-all duration-200",
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="px-0.5 py-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full">
+          <div className="p-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-hidden">
             {activeFile ? (
               <DocumentRenderer
                 key={activeFile.id}

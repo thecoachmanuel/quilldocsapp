@@ -229,7 +229,11 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
     return () => window.removeEventListener("resize", updateWidth);
   }, []);
 
-  const effectiveWidth = width || (windowWidth ? windowWidth - 16 : 600);
+  const clientWidth =
+    typeof window !== "undefined"
+      ? Math.max(window.innerWidth - (window.innerWidth < 640 ? 14 : 28), 280)
+      : 360;
+  const effectiveWidth = Math.min(width || clientWidth, clientWidth);
 
   useEffect(() => {
     setCurrPage(1);
@@ -253,9 +257,9 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
   };
 
   return (
-    <div className="w-full bg-white rounded-md shadow flex flex-col items-center">
-      <div className="h-14 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2">
-        <div className="flex items-center gap-1 sm:gap-1.5">
+    <div className="w-full max-w-full bg-white rounded-md shadow flex flex-col items-center overflow-x-hidden">
+      <div className="min-h-[3.25rem] h-auto py-1 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <Button
             disabled={currPage <= 1}
             onClick={() => {
@@ -274,7 +278,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
             <Input
               {...register("page")}
               className={cn(
-                "w-10 sm:w-12 h-8 text-center px-1 text-xs sm:text-sm",
+                "w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm",
                 errors.page && "focus-visible:ring-red-500"
               )}
               onKeyDown={(e) => {
@@ -283,7 +287,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 }
               }}
             />
-            <p className="text-zinc-700 text-xs sm:text-sm space-x-1">
+            <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5 sm:space-x-1">
               <span>/</span>
               <span>{numPages ?? "x"}</span>
             </p>
@@ -312,7 +316,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 type="button"
                 onClick={() => setRenderMode("page")}
                 className={cn(
-                  "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs",
                   renderMode === "page"
                     ? "bg-white text-zinc-900 font-semibold shadow-sm"
                     : "text-zinc-600 hover:text-zinc-900"
@@ -326,7 +330,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 type="button"
                 onClick={() => setRenderMode("reader")}
                 className={cn(
-                  "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs",
                   renderMode === "reader"
                     ? "bg-white text-zinc-900 font-semibold shadow-sm"
                     : "text-zinc-600 hover:text-zinc-900"
@@ -348,8 +352,8 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Find in doc... (Ctrl+F)"
-                className="h-7 w-24 sm:w-36 md:w-44 text-xs bg-white px-1.5 py-0 border-zinc-200"
+                placeholder="Find in doc..."
+                className="h-7 w-20 sm:w-36 md:w-44 text-xs bg-white px-1.5 py-0 border-zinc-200"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -365,7 +369,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 <span className="text-[10px] sm:text-[11px] font-medium text-zinc-600 px-0.5 whitespace-nowrap">
                   {searchMatches.length > 0
                     ? `${currentMatchIdx + 1}/${searchMatches.length}`
-                    : "0 found"}
+                    : "0"}
                 </span>
               )}
               <Button
@@ -374,7 +378,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 className="h-6 w-6 p-0 text-zinc-600"
                 disabled={searchMatches.length <= 1}
                 onClick={handlePrevMatch}
-                title="Previous match (Shift+Enter)"
+                title="Previous match"
               >
                 <ChevronUp className="h-3.5 w-3.5" />
               </Button>
@@ -384,7 +388,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 className="h-6 w-6 p-0 text-zinc-600"
                 disabled={searchMatches.length <= 1}
                 onClick={handleNextMatch}
-                title="Next match (Enter)"
+                title="Next match"
               >
                 <ChevronDown className="h-3.5 w-3.5" />
               </Button>
@@ -396,7 +400,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                   setIsSearchOpen(false);
                   setSearchQuery("");
                 }}
-                title="Close find (Esc)"
+                title="Close find"
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
@@ -419,7 +423,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm" aria-label="zoom" variant="ghost">
+              <Button className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm" aria-label="zoom" variant="ghost">
                 <ZoomIn className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 {scale * 100}%
                 <ChevronDown className="h-3 w-3 opacity-50" />
@@ -452,7 +456,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
               setRotation((prev) => (prev >= 270 ? 0 : prev + 90));
             }}
             variant="ghost"
-            className="px-1.5 sm:px-2.5 h-8"
+            className="hidden sm:inline-flex px-1.5 sm:px-2.5 h-8"
             aria-label="rotate 90 degrees"
           >
             <RotateCw className="h-4 w-4" />
@@ -462,9 +466,9 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
         </div>
       </div>
 
-      <div className="flex-1 w-full max-h-screen bg-zinc-100/60 flex flex-col justify-between">
-        <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)]">
-          <div ref={ref} className="w-full overflow-x-auto">
+      <div className="flex-1 w-full max-w-full max-h-screen bg-zinc-100/60 flex flex-col justify-between overflow-x-hidden">
+        <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)] w-full max-w-full">
+          <div ref={ref} className="w-full max-w-full overflow-x-auto flex justify-center">
             {renderMode === "reader" ? (
               <div className="w-full max-w-4xl mx-auto my-2 sm:my-5 bg-white border border-zinc-200 shadow-sm rounded-lg p-4 sm:p-10 md:p-14 select-text">
                 {isReaderLoading ? (

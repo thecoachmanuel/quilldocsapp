@@ -292,7 +292,14 @@ export default function PptxRenderer({
     const hasElements =
       activeSlide.elements && activeSlide.elements.length > 0;
 
-    const widthToUse = availableWidth || containerWidth || 960;
+    const clientWidth =
+      typeof window !== "undefined"
+        ? Math.max(window.innerWidth - (window.innerWidth < 640 ? 14 : 28), 280)
+        : 360;
+    const widthToUse = Math.min(
+      availableWidth || containerWidth || clientWidth,
+      clientWidth
+    );
     // Minimal side padding on mobile so slide uses nearly full width
     const sideAllowance = widthToUse < 640 ? (isExpanded ? 12 : 6) : isExpanded ? 32 : 24;
     const maxWidthAllowed = Math.max(widthToUse - sideAllowance, 260);
@@ -593,10 +600,10 @@ export default function PptxRenderer({
   );
 
   return (
-    <div className="w-full bg-white rounded-md shadow flex flex-col items-center">
+    <div className="w-full max-w-full bg-white rounded-md shadow flex flex-col items-center overflow-x-hidden">
       {/* Top Toolbar matching Quill app design */}
-      <div className="h-14 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 sm:gap-2">
-        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+      <div className="min-h-[3.25rem] h-auto py-1 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 shrink-0">
           <Button
             disabled={currSlide <= 1}
             onClick={handlePrev}
@@ -617,7 +624,7 @@ export default function PptxRenderer({
                   setCurrSlide(val);
                 }
               }}
-              className="w-10 sm:w-12 h-8 text-center px-1 text-xs sm:text-sm"
+              className="w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm"
             />
             <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5">
               <span>/</span>
@@ -680,8 +687,8 @@ export default function PptxRenderer({
                 ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Find in slides... (Ctrl+F)"
-                className="h-7 w-24 sm:w-36 md:w-44 text-xs bg-white px-1.5 py-0 border-zinc-200"
+                placeholder="Find in slides..."
+                className="h-7 w-20 sm:w-36 md:w-44 text-xs bg-white px-1.5 py-0 border-zinc-200"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -697,7 +704,7 @@ export default function PptxRenderer({
                 <span className="text-[10px] sm:text-[11px] font-medium text-zinc-600 px-0.5 whitespace-nowrap">
                   {searchMatches.length > 0
                     ? `${currentMatchIdx + 1}/${searchMatches.length}`
-                    : "0 found"}
+                    : "0"}
                 </span>
               )}
               <Button
@@ -753,7 +760,7 @@ export default function PptxRenderer({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm"
+                className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm"
                 aria-label="zoom"
                 variant="ghost"
               >
@@ -892,9 +899,9 @@ export default function PptxRenderer({
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 w-full max-h-screen bg-zinc-100/60 flex flex-col justify-between">
-        <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)] p-0.5 sm:p-4">
-          <div ref={containerRef} className="w-full">
+      <div className="flex-1 w-full max-w-full max-h-screen bg-zinc-100/60 flex flex-col justify-between overflow-x-hidden">
+        <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)] w-full max-w-full">
+          <div ref={containerRef} className="w-full max-w-full overflow-x-auto flex justify-center">
             {isLoading ? (
               <div className="flex justify-center items-center py-24 flex-col gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-orange-500" />

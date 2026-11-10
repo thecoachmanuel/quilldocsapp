@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
       // Ignored on read-only environments like Vercel
     }
 
-    // 5. Create database file record
+    // 5. Create database file record - set to SUCCESS immediately so chat is ready
     const createdFile = await db.file.create({
       data: {
         id: fileId,
@@ -172,18 +172,23 @@ export async function POST(req: NextRequest) {
         name: file.name,
         userId: user.id,
         url: fileUrl,
-        uploadStatus: "PROCESSING",
+        uploadStatus: "SUCCESS",
       },
     });
 
-    // 6. Vectorize document into Pinecone asynchronously
-    vectorizeAndIndexDocument({
-      fileId: createdFile.id,
-      fileUrl: fileUrl,
-      fileName: file.name,
-    }).catch((err) => {
-      console.error("[upload/route] Vectorization error:", err);
-    });
+    // 6. Vectorize document into Pinecone (bounded to 2.5s on serverless so it executes before container suspend)
+    try {
+      await Promise.race([
+        vectorizeAndIndexDocument({
+          fileId: createdFile.id,
+          fileUrl: fileUrl,
+          fileName: file.name,
+        }),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
+    } catch (vecErr) {
+      console.warn("[upload/route] Async vectorization warning:", vecErr);
+    }
 
     return NextResponse.json({
       success: true,

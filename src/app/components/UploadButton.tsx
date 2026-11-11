@@ -13,7 +13,6 @@ import {
   Loader2,
   FileText,
   Presentation,
-  Globe,
 } from "lucide-react";
 import { useState } from "react";
 import DropZone from "react-dropzone";
@@ -341,7 +340,7 @@ const UploadDropZone = ({
               htmlFor="dropzone-file"
               className="flex flex-col items-center justify-center w-full h-full rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100"
             >
-              <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
                 <Cloud className="h-6 w-6 text-zinc-500 mb-2" />
                 <p className="mb-2 text-sm text-zinc-700">
                   <span className="font-semibold">Click to upload</span> or drag
@@ -351,13 +350,6 @@ const UploadDropZone = ({
                   PDF, Word (.docx) or PowerPoint (.pptx) up to{" "}
                   {maxFileSizeMB}MB
                 </p>
-                <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-[11px] font-medium text-blue-700">
-                  <Globe className="h-3 w-3 shrink-0" />
-                  <span>
-                    Any document language supported &bull; Ask AI tutor in any
-                    language
-                  </span>
-                </span>
               </div>
               {acceptedFiles && acceptedFiles[0] ? (
                 <div className="max-w-xs bg-white flex items-center rounded-md overflow-hidden outline-[1px] outline-zinc-200 divide-x divide-zinc-200">

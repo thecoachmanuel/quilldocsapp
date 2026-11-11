@@ -106,7 +106,7 @@ async function Page() {
                         </div>
                         {!isFree ? (
                           <span className="text-xs font-medium text-zinc-500 mt-1">
-                            (~ ${price} USD &bull; Automatic bank FX conversion)
+                            (~ ${price} USD)
                           </span>
                         ) : (
                           <span className="text-xs font-medium text-zinc-500 mt-1">

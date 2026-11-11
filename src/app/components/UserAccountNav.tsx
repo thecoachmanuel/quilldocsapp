@@ -107,7 +107,7 @@ const UserAccountNav = async ({
         <DropdownMenuItem asChild className="cursor-pointer">
           {subscriptionPlan?.isSubscribed ? (
             <Link
-              href="/dashboard/billing"
+              href="/dashboard/billing?manage=true"
               className="w-full flex items-center justify-between"
             >
               <span>Manage Subscription</span>

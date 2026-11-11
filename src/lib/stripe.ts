@@ -120,23 +120,75 @@ export async function getDynamicPlans(): Promise<DynamicPlan[]> {
   }));
 }
 
+export function isUserRecordSubscribed(userRecord: {
+  stripePriceId?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripeCurrentPeriodEnd?: string | Date | null;
+}): boolean {
+  const periodEnd = userRecord.stripeCurrentPeriodEnd
+    ? new Date(userRecord.stripeCurrentPeriodEnd)
+    : null;
+
+  const isSimulatedSub = Boolean(
+    userRecord.stripeSubscriptionId?.startsWith("sub_test_")
+  );
+  const ignoreSimulatedSub =
+    isSimulatedSub &&
+    (isPaystackConfigured() ||
+      isStripeConfigured() ||
+      process.env.VERCEL === "1" ||
+      process.env.NODE_ENV === "production");
+
+  return Boolean(
+    !ignoreSimulatedSub &&
+      userRecord.stripePriceId &&
+      periodEnd &&
+      periodEnd.getTime() + 86_400_000 > Date.now()
+  );
+}
+
+export function resolveUserPlanFromPlans(
+  userRecord: {
+    stripePriceId?: string | null;
+    stripeSubscriptionId?: string | null;
+    stripeCurrentPeriodEnd?: string | Date | null;
+  },
+  dynamicPlans: DynamicPlan[]
+): { plan: DynamicPlan; isSubscribed: boolean } {
+  const freePlan =
+    dynamicPlans.find((p) => p.slug === "free") || dynamicPlans[0];
+  const proPlan =
+    dynamicPlans.find((p) => p.slug === "pro") || dynamicPlans[1] || freePlan;
+
+  const isSubscribed = isUserRecordSubscribed(userRecord);
+  const plan = isSubscribed
+    ? dynamicPlans.find(
+        (p) =>
+          p.slug === userRecord.stripePriceId ||
+          p.price.priceIds.test === userRecord.stripePriceId ||
+          p.price.priceIds.production === userRecord.stripePriceId ||
+          (userRecord.stripePriceId === "pro" && p.slug === "pro")
+      ) || proPlan
+    : freePlan;
+
+  return { plan, isSubscribed };
+}
+
 export async function getUserSubscriptionPlan() {
   const { getUser } = getKindeServerSession();
   const user = await getUser();
   const dynamicPlans = await getDynamicPlans();
   const freePlan =
     dynamicPlans.find((p) => p.slug === "free") || dynamicPlans[0];
-  const proPlan =
-    dynamicPlans.find((p) => p.slug === "pro") ||
-    dynamicPlans[1] ||
-    freePlan;
 
   if (!user?.id) {
     return {
       ...freePlan,
+      stripeSubscriptionId: null,
+      stripeCurrentPeriodEnd: null,
+      stripeCustomerId: null,
       isSubscribed: false,
       isCanceled: false,
-      stripeCurrentPeriodEnd: null,
     };
   }
 
@@ -149,9 +201,11 @@ export async function getUserSubscriptionPlan() {
   if (!dbUser) {
     return {
       ...freePlan,
+      stripeSubscriptionId: null,
+      stripeCurrentPeriodEnd: null,
+      stripeCustomerId: null,
       isSubscribed: false,
       isCanceled: false,
-      stripeCurrentPeriodEnd: null,
     };
   }
 
@@ -159,32 +213,7 @@ export async function getUserSubscriptionPlan() {
     ? new Date(dbUser.stripeCurrentPeriodEnd)
     : null;
 
-  const isSimulatedSub = Boolean(
-    dbUser.stripeSubscriptionId?.startsWith("sub_test_")
-  );
-  const ignoreSimulatedSub =
-    isSimulatedSub &&
-    (isPaystackConfigured() ||
-      isStripeConfigured() ||
-      process.env.VERCEL === "1" ||
-      process.env.NODE_ENV === "production");
-
-  const isSubscribed = Boolean(
-    !ignoreSimulatedSub &&
-      dbUser.stripePriceId &&
-      periodEnd &&
-      periodEnd.getTime() + 86_400_000 > Date.now()
-  );
-
-  const plan = isSubscribed
-    ? dynamicPlans.find(
-        (p) =>
-          p.slug === dbUser.stripePriceId ||
-          p.price.priceIds.test === dbUser.stripePriceId ||
-          p.price.priceIds.production === dbUser.stripePriceId ||
-          (dbUser.stripePriceId === "pro" && p.slug === "pro")
-      ) || proPlan
-    : freePlan;
+  const { plan, isSubscribed } = resolveUserPlanFromPlans(dbUser, dynamicPlans);
 
   let isCanceled = false;
   if (

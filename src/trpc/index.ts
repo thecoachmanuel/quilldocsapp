@@ -16,6 +16,8 @@ import {
   getUserSubscriptionPlan,
   getDynamicPlans,
   isStripeConfigured,
+  isUserRecordSubscribed,
+  resolveUserPlanFromPlans,
   stripe,
 } from "@/lib/stripe";
 import {
@@ -95,7 +97,9 @@ export const appRouter = router({
     });
   }),
 
-  createStripeSession: privateProcedure.mutation(async ({ ctx }) => {
+  createStripeSession: privateProcedure
+    .input(z.object({ renew: z.boolean().optional() }).optional())
+    .mutation(async ({ ctx, input }) => {
     const { userId } = ctx;
 
     const billingUrl = resolveAppUrl("/dashboard/billing");
@@ -119,7 +123,7 @@ export const appRouter = router({
 
     // 1. Paystack Gateway (Primary — strictly used whenever Paystack is configured)
     if (isPaystackConfigured()) {
-      if (subscriptionPlan.isSubscribed) {
+      if (subscriptionPlan.isSubscribed && !input?.renew) {
         return { url: `${billingUrl}?status=active` };
       }
 
@@ -303,6 +307,45 @@ export const appRouter = router({
         };
       }
     }),
+
+  cancelSubscription: privateProcedure.mutation(async ({ ctx }) => {
+    const { userId } = ctx;
+    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+    const dbUser = await db.user.findFirst({
+      where: { id: userId },
+    });
+
+    if (!dbUser) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+    if (
+      isStripeConfigured() &&
+      dbUser.stripeSubscriptionId &&
+      dbUser.stripeSubscriptionId.startsWith("sub_") &&
+      !dbUser.stripeSubscriptionId.startsWith("sub_admin_") &&
+      !dbUser.stripeSubscriptionId.startsWith("sub_test_")
+    ) {
+      try {
+        await stripe.subscriptions.cancel(dbUser.stripeSubscriptionId);
+      } catch (stripeCancelErr: any) {
+        console.warn(
+          "[cancelSubscription] Stripe cancel warning:",
+          stripeCancelErr?.message
+        );
+      }
+    }
+
+    await db.user.update({
+      where: { id: userId },
+      data: {
+        stripePriceId: null,
+        stripeSubscriptionId: null,
+        stripeCurrentPeriodEnd: null,
+      },
+    });
+
+    return { success: true };
+  }),
 
   getFileUploadStatus: privateProcedure
     .input(z.object({ fileId: z.string() }))
@@ -601,30 +644,11 @@ export const appRouter = router({
       getDynamicPlans(),
     ]);
 
-    const now = Date.now();
-    const freePlan =
-      dynamicPlans.find((p) => p.slug === "free") || dynamicPlans[0];
-    const proPlan =
-      dynamicPlans.find((p) => p.slug === "pro") ||
-      dynamicPlans[1] ||
-      freePlan;
-
     return allUsers.map((u: any) => {
-      const periodEnd = u.stripeCurrentPeriodEnd
-        ? new Date(u.stripeCurrentPeriodEnd)
-        : null;
-      const isSubscribed = Boolean(
-        u.stripePriceId && periodEnd && periodEnd.getTime() + 86_400_000 > now
+      const { plan: matchedPlan, isSubscribed } = resolveUserPlanFromPlans(
+        u,
+        dynamicPlans
       );
-      const matchedPlan = isSubscribed
-        ? dynamicPlans.find(
-            (p) =>
-              p.slug === u.stripePriceId ||
-              p.price.priceIds.test === u.stripePriceId ||
-              p.price.priceIds.production === u.stripePriceId ||
-              (u.stripePriceId === "pro" && p.slug === "pro")
-          ) || proPlan
-        : freePlan;
 
       const userFiles = allFiles.filter((f: any) => f.userId === u.id);
       const userMessages = allMessages.filter((m: any) => m.userId === u.id);
@@ -692,9 +716,7 @@ export const appRouter = router({
           status: input.status,
           stripeCustomerId: isPaidPlan ? `cus_admin_${Date.now()}` : null,
           stripeSubscriptionId: isPaidPlan ? `sub_admin_${Date.now()}` : null,
-          stripePriceId: isPaidPlan
-            ? targetPlan.price.priceIds.test || targetPlan.slug
-            : null,
+          stripePriceId: isPaidPlan ? targetPlan.slug : null,
           stripeCurrentPeriodEnd: periodEnd,
         },
       });
@@ -772,7 +794,18 @@ export const appRouter = router({
       const targetPlan =
         dynamicPlans.find((p) => p.slug === (input.planSlug || "pro")) ||
         dynamicPlans.find((p) => p.slug === "pro") ||
-        dynamicPlans[1];
+        dynamicPlans.find((p) => p.slug !== "free");
+
+      if (!targetPlan || targetPlan.slug === "free") {
+        return await db.user.update({
+          where: { id: input.userId },
+          data: {
+            stripePriceId: null,
+            stripeSubscriptionId: null,
+            stripeCurrentPeriodEnd: null,
+          },
+        });
+      }
 
       const currentEnd =
         input.action === "EXTEND" &&
@@ -785,6 +818,10 @@ export const appRouter = router({
         currentEnd + input.durationDays * 24 * 60 * 60 * 1000
       );
 
+      const hasRealSubscription =
+        user.stripeSubscriptionId &&
+        !user.stripeSubscriptionId.startsWith("sub_test_");
+
       return await db.user.update({
         where: { id: input.userId },
         data: {
@@ -792,9 +829,10 @@ export const appRouter = router({
             user.stripeCustomerId ||
             `cus_admin_${input.userId.slice(0, 8)}`,
           stripeSubscriptionId:
-            user.stripeSubscriptionId || `sub_admin_${Date.now()}`,
-          stripePriceId:
-            targetPlan?.price.priceIds.test || targetPlan?.slug || "pro",
+            input.action === "EXTEND" && hasRealSubscription
+              ? user.stripeSubscriptionId
+              : `sub_admin_${Date.now()}`,
+          stripePriceId: targetPlan.slug,
           stripeCurrentPeriodEnd: newPeriodEnd,
         },
       });
@@ -839,26 +877,16 @@ export const appRouter = router({
       db.user.findMany(),
     ]);
 
-    const now = Date.now();
-
     return plans.map((plan) => {
       const subscribersCount = allUsers.filter((u: any) => {
-        const periodEnd = u.stripeCurrentPeriodEnd
-          ? new Date(u.stripeCurrentPeriodEnd)
-          : null;
-        const isSubscribed = Boolean(
-          u.stripePriceId && periodEnd && periodEnd.getTime() + 86_400_000 > now
+        const { plan: matchedPlan, isSubscribed } = resolveUserPlanFromPlans(
+          u,
+          plans
         );
         if (plan.slug === "free") {
           return !isSubscribed;
         }
-        return (
-          isSubscribed &&
-          (u.stripePriceId === plan.slug ||
-            u.stripePriceId === plan.price.priceIds.test ||
-            u.stripePriceId === plan.price.priceIds.production ||
-            (plan.slug === "pro" && u.stripePriceId === "pro"))
-        );
+        return isSubscribed && matchedPlan?.slug === plan.slug;
       }).length;
 
       return {

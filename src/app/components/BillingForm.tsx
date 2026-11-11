@@ -3,7 +3,16 @@
 import { getUserSubscriptionPlan } from "@/lib/stripe";
 import { trpc } from "@/app/_trpc/client";
 import MaxWidthWrapper from "./MaxWidthWrapper";
-import { Check, Gem, Loader2, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  Calendar,
+  Check,
+  CreditCard,
+  ExternalLink,
+  Gem,
+  Loader2,
+  ShieldCheck,
+} from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -14,19 +23,32 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 interface BillingFormProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
+  billingGateway?: "paystack" | "stripe" | "none";
 }
 
-const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
+const BillingForm = ({
+  subscriptionPlan,
+  billingGateway = "paystack",
+}: BillingFormProps) => {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isManageOpen, setIsManageOpen] = useState(false);
+  const [confirmDowngrade, setConfirmDowngrade] = useState(false);
   const verifiedRef = useRef<string | null>(null);
 
   const { mutate: verifyPayment } = trpc.verifyPaystackPayment.useMutation({
@@ -64,7 +86,7 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
 
   useEffect(() => {
     const ref = searchParams.get("reference") || searchParams.get("trxref");
-    if (ref && !subscriptionPlan.isSubscribed && verifiedRef.current !== ref) {
+    if (ref && verifiedRef.current !== ref) {
       verifiedRef.current = ref;
       setIsVerifying(true);
       verifyPayment({ reference: ref });
@@ -78,6 +100,11 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
         title: "Plan updated",
         description: "Your subscription has been switched back to the Free plan.",
       });
+    } else if (
+      searchParams.get("manage") === "true" &&
+      subscriptionPlan.isSubscribed
+    ) {
+      setIsManageOpen(true);
     } else if (searchParams.get("status") === "active") {
       toast({
         title: "Subscription Active",
@@ -85,6 +112,28 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
       });
     }
   }, [searchParams, subscriptionPlan.isSubscribed, toast, verifyPayment]);
+
+  const { mutate: cancelSubscription, isLoading: isCanceling } =
+    trpc.cancelSubscription.useMutation({
+      onSuccess: () => {
+        setConfirmDowngrade(false);
+        setIsManageOpen(false);
+        window.history.replaceState({}, "", "/dashboard/billing");
+        toast({
+          title: "Plan updated",
+          description: "Your subscription has been switched back to the Free plan.",
+        });
+        router.refresh();
+      },
+      onError: (err) => {
+        toast({
+          title: "Could not downgrade plan",
+          description:
+            err.message || "Please try again or contact support.",
+          variant: "destructive",
+        });
+      },
+    });
 
   const { mutate: createStripeSession, isLoading } =
     trpc.createStripeSession.useMutation({
@@ -117,19 +166,19 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
 
   const currentFeatures = isPro
     ? [
-        "50 documents included per month",
-        "Up to 25 pages per document",
-        "16MB maximum file size limit",
-        "Higher-quality AI responses with deep context (60k chars)",
-        "Priority processing and instant model fallback",
-      ]
+      "50 documents included per month",
+      "Up to 25 pages per document",
+      "16MB maximum file size limit",
+      "Higher-quality AI responses with deep context (60k chars)",
+      "Priority processing and instant model fallback",
+    ]
     : [
-        "10 documents included per month",
-        "Up to 5 pages per document",
-        "4MB maximum file size limit",
-        "Standard AI responses (15k chars context)",
-        "Standard processing",
-      ];
+      "10 documents included per month",
+      "Up to 5 pages per document",
+      "4MB maximum file size limit",
+      "Standard AI responses (15k chars context)",
+      "Standard processing",
+    ];
 
   const proFeatures = [
     "50 documents included per month (5x increase)",
@@ -140,13 +189,30 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
     "Priority support & fastest processing queue",
   ];
 
+  const paymentMethodLabel = subscriptionPlan.stripeSubscriptionId?.startsWith(
+    "paystack_"
+  )
+    ? "Paystack"
+    : subscriptionPlan.stripeSubscriptionId?.startsWith("sub_admin_")
+    ? "Admin Assigned"
+    : subscriptionPlan.stripeSubscriptionId?.startsWith("sub_")
+    ? "Stripe"
+    : billingGateway === "stripe"
+    ? "Stripe"
+    : "Paystack";
+
   return (
     <MaxWidthWrapper className="max-w-5xl">
       <form
         className="mt-12"
         onSubmit={(e) => {
           e.preventDefault();
-          createStripeSession();
+          if (isPro) {
+            setConfirmDowngrade(false);
+            setIsManageOpen(true);
+          } else {
+            createStripeSession();
+          }
         }}
       >
         <Card className="border border-zinc-200 shadow-sm">
@@ -170,10 +236,15 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
                 </CardDescription>
               </div>
 
-              {!isPro && (
+              {!isPro ? (
                 <div className="hidden sm:flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full font-medium">
                   <Gem className="h-3.5 w-3.5" />
                   Upgrade available
+                </div>
+              ) : (
+                <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full font-medium">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {paymentMethodLabel} Active
                 </div>
               )}
             </div>
@@ -242,8 +313,8 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
               {isVerifying
                 ? "Verifying Payment..."
                 : isPro
-                ? "Manage Subscription"
-                : `Upgrade to PRO (₦${displayPriceNgn.toLocaleString()} / mo)`}
+                  ? "Manage Subscription"
+                  : `Upgrade to PRO (₦${displayPriceNgn.toLocaleString()} / mo)`}
             </Button>
 
             {subscriptionPlan.isSubscribed ? (
@@ -253,9 +324,9 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
                   : "Your plan renews on "}
                 {subscriptionPlan.stripeCurrentPeriodEnd
                   ? format(
-                      subscriptionPlan.stripeCurrentPeriodEnd,
-                      "dd.MM.yyyy"
-                    )
+                    subscriptionPlan.stripeCurrentPeriodEnd,
+                    "dd.MM.yyyy"
+                  )
                   : "N/A"}
                 .
               </p>
@@ -267,6 +338,168 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
           </CardFooter>
         </Card>
       </form>
+
+      {/* PRO Subscription Management Modal */}
+      {isPro && (
+        <Dialog
+          open={isManageOpen}
+          onOpenChange={(open) => {
+            setIsManageOpen(open);
+            if (!open) {
+              setConfirmDowngrade(false);
+              if (searchParams.get("manage") === "true") {
+                window.history.replaceState({}, "", "/dashboard/billing");
+              }
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold text-zinc-900">
+                <CreditCard className="h-5 w-5 text-blue-600" />
+                Manage {subscriptionPlan.name} Subscription
+              </DialogTitle>
+              <DialogDescription className="text-xs text-zinc-500">
+                Review your active plan details, extend billing time, or switch plans.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 mt-2">
+              <div className="rounded-lg bg-zinc-50 border border-zinc-200 p-4 space-y-2.5 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-500">Current Plan</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full text-xs border border-blue-200">
+                    <Gem className="h-3 w-3" />
+                    {subscriptionPlan.name}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-500">Billing Method</span>
+                  <span className="font-medium text-zinc-800">
+                    {paymentMethodLabel}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-500">
+                    {subscriptionPlan.isCanceled ? "Access Ends" : "Next Renewal"}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-zinc-900">
+                    <Calendar className="h-3.5 w-3.5 text-zinc-400" />
+                    {subscriptionPlan.stripeCurrentPeriodEnd
+                      ? format(subscriptionPlan.stripeCurrentPeriodEnd, "PPP")
+                      : "Active"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-500">Plan Limits</span>
+                  <span className="font-medium text-zinc-800 text-xs sm:text-sm text-right">
+                    {subscriptionPlan.quota} docs · {subscriptionPlan.pagesPerPdf} pages · {subscriptionPlan.maxFileSizeMB}MB
+                  </span>
+                </div>
+
+                {subscriptionPlan.stripeSubscriptionId && (
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-200/70">
+                    <span className="text-xs text-zinc-500">Reference</span>
+                    <code className="text-[11px] font-mono text-zinc-600 truncate max-w-[220px]">
+                      {subscriptionPlan.stripeSubscriptionId}
+                    </code>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2.5">
+                {billingGateway === "paystack" && (
+                  <Button
+                    type="button"
+                    disabled={isLoading || isCanceling}
+                    onClick={() => createStripeSession({ renew: true })}
+                    className="w-full gap-2"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CreditCard className="h-4 w-4" />
+                    )}
+                    Extend / Renew +30 Days (₦{displayPriceNgn.toLocaleString()})
+                  </Button>
+                )}
+
+                {billingGateway === "stripe" && subscriptionPlan.stripeCustomerId && (
+                  <Button
+                    type="button"
+                    disabled={isLoading || isCanceling}
+                    onClick={() => createStripeSession()}
+                    className="w-full gap-2"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ExternalLink className="h-4 w-4" />
+                    )}
+                    Open Stripe Billing Portal
+                  </Button>
+                )}
+              </div>
+
+              <div className="border-t border-zinc-200 pt-4">
+                {!confirmDowngrade ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-zinc-500">
+                      Need a break from PRO? Switch back to Free anytime.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isLoading || isCanceling}
+                      onClick={() => setConfirmDowngrade(true)}
+                      className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 shrink-0"
+                    >
+                      Downgrade to Free
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3.5 space-y-3">
+                    <div className="flex items-start gap-2 text-xs text-red-800">
+                      <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                      <p>
+                        Downgrading switches your account to the{" "}
+                        <strong>Free plan</strong> (10 documents max, 5 pages per document, 4MB limit). Your uploaded documents and chats stay preserved.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isCanceling}
+                        onClick={() => setConfirmDowngrade(false)}
+                      >
+                        Keep PRO
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        disabled={isCanceling}
+                        onClick={() => cancelSubscription()}
+                      >
+                        {isCanceling && (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        )}
+                        Confirm Downgrade
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </MaxWidthWrapper>
   );
 };

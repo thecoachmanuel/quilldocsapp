@@ -173,7 +173,7 @@ async function Page() {
                       ) : user ? (
                         subscriptionPlan.isSubscribed ? (
                           <Link
-                            href="/dashboard/billing"
+                            href="/dashboard/billing?manage=true"
                             className={buttonVariants({
                               className: "w-full",
                             })}

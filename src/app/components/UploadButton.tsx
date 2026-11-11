@@ -48,8 +48,12 @@ const UploadDropZone = ({
     onSuccess: (file) => {
       utils.getUserFiles.invalidate();
       router.refresh();
+      setIsUploading(false);
       if (closeDialog) closeDialog();
-      router.push(`/dashboard/${file.id}`);
+      toast({
+        title: "Document uploaded",
+        description: `${file?.name || "Your document"} has been added to your dashboard.`,
+      });
     },
 
     retry: true,
@@ -127,8 +131,12 @@ const UploadDropZone = ({
               setUploadProgress(100);
               await utils.getUserFiles.invalidate();
               router.refresh();
+              setIsUploading(false);
               if (closeDialog) closeDialog();
-              router.push(`/dashboard/${data.file.id}`);
+              toast({
+                title: "Document uploaded",
+                description: `${acceptedFile[0].name} has been added to your dashboard.`,
+              });
               return;
             }
           } else {
@@ -261,7 +269,7 @@ const UploadDropZone = ({
                   {uploadProgress === 100 ? (
                     <div className="flex gap-1 items-center justify-center text-sm text-zinc-700 text-center pt-2">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      Redirecting...
+                      Finalizing upload...
                     </div>
                   ) : null}
                 </div>

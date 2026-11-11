@@ -791,13 +791,13 @@ export default function UsersManagement() {
                 )}
               </div>
 
-              {/* Grant / Upgrade Form */}
+              {/* Assign, Upgrade, or Downgrade Form */}
               <div className="space-y-3">
                 <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-600">
-                  Assign or Upgrade Subscription Tier
+                  Upgrade or Downgrade Plan
                 </label>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-zinc-700 mb-1">
                       Target Plan
@@ -807,58 +807,81 @@ export default function UsersManagement() {
                       onChange={(e) => setSelectedPlanSlug(e.target.value)}
                       className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                     >
-                      {(plans || [])
-                        .filter((p: any) => p.slug !== "free")
-                        .map((p: any) => (
-                          <option key={p.slug} value={p.slug}>
-                            {p.name} (${p.price.amount}/mo - {p.quota} files)
-                          </option>
-                        ))}
+                      {(plans || []).map((p: any) => (
+                        <option key={p.slug} value={p.slug}>
+                          {p.name} ({p.price.amount === 0 ? "Free" : `$${p.price.amount}/mo`} - {p.quota} files)
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 mb-1">
-                      Billing Period (Days)
-                    </label>
-                    <select
-                      value={subDurationDays}
-                      onChange={(e) =>
-                        setSubDurationDays(Number(e.target.value))
-                      }
-                      className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value={30}>30 Days (1 Month)</option>
-                      <option value={90}>90 Days (Quarter)</option>
-                      <option value={180}>180 Days (6 Months)</option>
-                      <option value={365}>365 Days (1 Year)</option>
-                    </select>
-                  </div>
+                  {selectedPlanSlug !== "free" && (
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-700 mb-1">
+                        Billing Period (Days)
+                      </label>
+                      <select
+                        value={subDurationDays}
+                        onChange={(e) =>
+                          setSubDurationDays(Number(e.target.value))
+                        }
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value={30}>30 Days (1 Month)</option>
+                        <option value={90}>90 Days (Quarter)</option>
+                        <option value={180}>180 Days (6 Months)</option>
+                        <option value={365}>365 Days (1 Year)</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <Button
-                    type="button"
-                    disabled={manageSubMutation.isLoading}
-                    onClick={() =>
-                      manageSubMutation.mutate({
-                        userId: subModalUser.id,
-                        action: "GRANT_PLAN",
-                        planSlug: selectedPlanSlug,
-                        durationDays: subDurationDays,
-                      })
-                    }
-                    className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
-                  >
-                    {manageSubMutation.isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Gem className="h-4 w-4" />
-                    )}
-                    Activate Plan ({subDurationDays}d)
-                  </Button>
+                  {selectedPlanSlug === "free" ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={manageSubMutation.isLoading}
+                      onClick={() =>
+                        manageSubMutation.mutate({
+                          userId: subModalUser.id,
+                          action: "REVOKE_TO_FREE",
+                          planSlug: "free",
+                        })
+                      }
+                      className="gap-1.5"
+                    >
+                      {manageSubMutation.isLoading && (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                      Downgrade to Free Plan
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      disabled={manageSubMutation.isLoading}
+                      onClick={() =>
+                        manageSubMutation.mutate({
+                          userId: subModalUser.id,
+                          action: "GRANT_PLAN",
+                          planSlug: selectedPlanSlug,
+                          durationDays: subDurationDays,
+                        })
+                      }
+                      className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                    >
+                      {manageSubMutation.isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Gem className="h-4 w-4" />
+                      )}
+                      {subModalUser.isSubscribed
+                        ? `Switch / Set ${selectedPlanSlug.toUpperCase()} (${subDurationDays}d)`
+                        : `Upgrade Plan (${subDurationDays}d)`}
+                    </Button>
+                  )}
 
-                  {subModalUser.isSubscribed && (
+                  {subModalUser.isSubscribed && selectedPlanSlug !== "free" && (
                     <Button
                       type="button"
                       variant="outline"
@@ -877,7 +900,7 @@ export default function UsersManagement() {
                     </Button>
                   )}
 
-                  {subModalUser.isSubscribed && (
+                  {subModalUser.isSubscribed && selectedPlanSlug !== "free" && (
                     <Button
                       type="button"
                       variant="outline"
@@ -886,6 +909,7 @@ export default function UsersManagement() {
                         manageSubMutation.mutate({
                           userId: subModalUser.id,
                           action: "REVOKE_TO_FREE",
+                          planSlug: "free",
                         })
                       }
                       className="border-red-200 text-red-600 hover:bg-red-50 ml-auto"

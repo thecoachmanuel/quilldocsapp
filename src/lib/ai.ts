@@ -191,6 +191,7 @@ export async function buildStructuredDocumentContext({
   query,
   maxChars = 25000,
   isMultiDoc = false,
+  docIndex,
   holistic = false,
 }: {
   fileUrl: string;
@@ -198,6 +199,7 @@ export async function buildStructuredDocumentContext({
   query: string;
   maxChars?: number;
   isMultiDoc?: boolean;
+  docIndex?: number;
   holistic?: boolean;
 }): Promise<{
   context: string;
@@ -214,7 +216,11 @@ export async function buildStructuredDocumentContext({
       (parsed.slides ? parsed.slides.length : null);
 
     const formatTag = (unit: "Page" | "Slide", num: number) =>
-      isMultiDoc ? `[Source: ${fileName} • ${unit} ${num}]` : `[${unit} ${num}]`;
+      isMultiDoc && docIndex
+        ? `[${docIndex} · ${unit === "Slide" ? "s" : "p"}.${num}]`
+        : isMultiDoc
+        ? `[Source: ${fileName} • ${unit} ${num}]`
+        : `[${unit} ${num}]`;
 
     const segments: StructuredSegment[] = [];
     let orderCounter = 0;

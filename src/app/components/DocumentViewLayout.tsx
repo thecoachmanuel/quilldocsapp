@@ -47,15 +47,18 @@ export default function DocumentViewLayout({
   // Handle cross-document citation clicks if the AI auto-referenced other documents
   useEffect(() => {
     const handleJumpToDoc = (e: any) => {
-      const { docName, page, type } = e.detail || {};
-      if (!docName) return;
+      const { docId, docName, page, type } = e.detail || {};
+      if (!docId && !docName) return;
 
-      const lowerDoc = docName.toLowerCase();
-      if (
-        fileName &&
-        (fileName.toLowerCase() === lowerDoc ||
-          fileName.toLowerCase().includes(lowerDoc))
-      ) {
+      const lowerDoc = (docName || "").toLowerCase();
+      const matchesCurrent =
+        (docId && docId === fileId) ||
+        (fileName &&
+          lowerDoc &&
+          (fileName.toLowerCase() === lowerDoc ||
+            fileName.toLowerCase().includes(lowerDoc)));
+
+      if (matchesCurrent) {
         if (page) {
           window.dispatchEvent(
             new CustomEvent("quill:jump-to-page", {
@@ -67,11 +70,13 @@ export default function DocumentViewLayout({
       }
 
       const target =
+        (docId ? userFiles.find((f) => f.id === docId) : undefined) ||
         userFiles.find((f) => f.name.toLowerCase() === lowerDoc) ||
         userFiles.find(
           (f) =>
-            f.name.toLowerCase().includes(lowerDoc) ||
-            lowerDoc.includes(f.name.toLowerCase())
+            lowerDoc &&
+            (f.name.toLowerCase().includes(lowerDoc) ||
+              lowerDoc.includes(f.name.toLowerCase()))
         );
 
       if (target && target.id !== fileId) {

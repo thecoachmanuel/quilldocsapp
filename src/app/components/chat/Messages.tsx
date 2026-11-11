@@ -2,7 +2,7 @@ import { trpc } from "@/app/_trpc/client";
 import { INFINITE_QUERY_LIMIT } from "@/config/infinite-query";
 import { Loader2, MessageSquare, Layers } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
-import Message from "./Message";
+import Message, { DocSourceRef } from "./Message";
 import { useContext, useEffect, useRef } from "react";
 import { ChatContext } from "./ChatContext";
 import { useIntersection } from "@mantine/hooks";
@@ -12,12 +12,30 @@ interface MessagesProps {
   fileId: string;
   isExpanded?: boolean;
   docNames?: string[];
+  docSources?: DocSourceRef[];
 }
 
-function Messages({ fileId, isExpanded = false, docNames }: MessagesProps) {
-  const { isLoading: isAiThinking, isExpanded: contextExpanded } =
-    useContext(ChatContext);
+function Messages({
+  fileId,
+  isExpanded = false,
+  docNames,
+  docSources,
+}: MessagesProps) {
+  const {
+    isLoading: isAiThinking,
+    isExpanded: contextExpanded,
+    autoMultiDocs,
+  } = useContext(ChatContext);
   const effectiveExpanded = isExpanded || contextExpanded || false;
+  const effectiveDocSources: DocSourceRef[] =
+    docSources && docSources.length > 0
+      ? docSources
+      : autoMultiDocs && autoMultiDocs.ids.length > 0
+      ? autoMultiDocs.ids.map((id, idx) => ({
+          id,
+          name: autoMultiDocs.names[idx] || `Document ${idx + 1}`,
+        }))
+      : (docNames || []).map((name) => ({ name }));
 
   const { data, isLoading, fetchNextPage } =
     trpc.getFileMessages.useInfiniteQuery(
@@ -84,6 +102,7 @@ function Messages({ fileId, isExpanded = false, docNames }: MessagesProps) {
                   key={message.id}
                   isNextMessageSamePerson={isNextMessageSamePerson}
                   isExpanded={effectiveExpanded}
+                  docSources={effectiveDocSources}
                 />
               );
             } else {
@@ -93,6 +112,7 @@ function Messages({ fileId, isExpanded = false, docNames }: MessagesProps) {
                   key={message.id}
                   isNextMessageSamePerson={isNextMessageSamePerson}
                   isExpanded={effectiveExpanded}
+                  docSources={effectiveDocSources}
                 />
               );
             }
@@ -120,10 +140,13 @@ function Messages({ fileId, isExpanded = false, docNames }: MessagesProps) {
                   {docNames.map((name, idx) => (
                     <span
                       key={`${name}-${idx}`}
-                      className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white text-zinc-700 border border-zinc-200 truncate max-w-[170px]"
+                      className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-white text-zinc-700 border border-zinc-200 max-w-[185px]"
                       title={name}
                     >
-                      {name}
+                      <span className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-600 text-white text-[9px] font-bold px-0.5 shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="truncate">{name}</span>
                     </span>
                   ))}
                 </div>

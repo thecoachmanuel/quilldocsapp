@@ -147,8 +147,8 @@ export async function POST(req: NextRequest) {
     const maxVectorMatchesPerDoc = isMultiDoc
       ? Math.max(3, Math.floor((isPro ? 18 : 10) / activeFiles.length))
       : isPro
-      ? 8
-      : 5;
+        ? 8
+        : 5;
 
     let embeddings: OpenAIEmbeddings | null = null;
     let pineconeIndex: any = null;
@@ -183,7 +183,8 @@ export async function POST(req: NextRequest) {
     }
 
     const perDocResults: PerDocContextResult[] = await Promise.all(
-      activeFiles.map(async (docFile: any) => {
+      activeFiles.map(async (docFile: any, docIdx: number) => {
+        const docNumber = docIdx + 1;
         const parsedMeta = await parseDocument(docFile.url).catch(() => null);
         const totalPages =
           parsedMeta?.totalPages ||
@@ -217,13 +218,15 @@ export async function POST(req: NextRequest) {
                   pageNum = totalPages;
                 }
                 const unit = m.metadata?.type || unitLabel;
+                const unitShort =
+                  String(unit).toLowerCase() === "slide" ? "s" : "p";
                 const tag = isMultiDoc
                   ? pageNum
-                    ? `[Source: ${docFile.name} • ${unit} ${pageNum}]`
-                    : `[Source: ${docFile.name}]`
+                    ? `[${docNumber} · ${unitShort}.${pageNum}]`
+                    : `[${docNumber}]`
                   : pageNum
-                  ? `[${unit} ${pageNum}]`
-                  : "";
+                    ? `[${unit} ${pageNum}]`
+                    : "";
                 return tag ? `${tag}\n${m.pageContent}` : m.pageContent;
               });
           } catch (vecErr) {
@@ -245,6 +248,7 @@ export async function POST(req: NextRequest) {
             query: message,
             maxChars: maxCharsPerDoc,
             isMultiDoc,
+            docIndex: docNumber,
             holistic: holisticQuery,
           });
 
@@ -291,17 +295,15 @@ export async function POST(req: NextRequest) {
 
     const context = isMultiDoc
       ? perDocResults
-          .map((res, idx) => {
-            const countText = res.totalPages
-              ? ` (${res.totalPages} ${res.unitLabel.toLowerCase()}${
-                  res.totalPages === 1 ? "" : "s"
-                })`
-              : "";
-            return `=== DOCUMENT ${idx + 1} of ${perDocResults.length}: "${
-              res.file.name
-            }"${countText} ===\n${res.context}\n=== END DOCUMENT ${idx + 1} ===`;
-          })
-          .join("\n\n")
+        .map((res, idx) => {
+          const countText = res.totalPages
+            ? ` (${res.totalPages} ${res.unitLabel.toLowerCase()}${res.totalPages === 1 ? "" : "s"
+            })`
+            : "";
+          return `=== DOCUMENT [${idx + 1}]: "${res.file.name
+            }"${countText} ===\n${res.context}\n=== END DOCUMENT [${idx + 1}] ===`;
+        })
+        .join("\n\n")
       : perDocResults[0]?.context || "";
 
     console.log(
@@ -344,11 +346,10 @@ export async function POST(req: NextRequest) {
     const docInventoryLines = perDocResults
       .map((res, idx) => {
         const pageInfo = res.totalPages
-          ? ` — ${res.totalPages} ${res.unitLabel.toLowerCase()}${
-              res.totalPages === 1 ? "" : "s"
-            }`
+          ? ` — ${res.totalPages} ${res.unitLabel.toLowerCase()}${res.totalPages === 1 ? "" : "s"
+          }`
           : "";
-        return `${idx + 1}. "${res.file.name}"${pageInfo}`;
+        return `[${idx + 1}] "${res.file.name}"${pageInfo}`;
       })
       .join("\n");
 
@@ -361,21 +362,18 @@ export async function POST(req: NextRequest) {
     const unloadedLibraryNote =
       unloadedLibraryFiles.length > 0
         ? `\nOther uploaded documents in user's library (NOT loaded in this context): ${unloadedLibraryFiles
-            .slice(0, 12)
-            .map((f: any) => `"${f.name}"`)
-            .join(", ")}.`
+          .slice(0, 12)
+          .map((f: any) => `"${f.name}"`)
+          .join(", ")}.`
         : "";
 
     const primaryResult = perDocResults[0];
     const singlePageConstraint =
       !isMultiDoc && primaryResult?.totalPages
-        ? `- Exact length: "${primaryResult.file.name}" has exactly ${
-            primaryResult.totalPages
-          } ${primaryResult.unitLabel.toLowerCase()}${
-            primaryResult.totalPages === 1 ? "" : "s"
-          }. Never cite any ${primaryResult.unitLabel.toLowerCase()} number greater than ${
-            primaryResult.totalPages
-          }.`
+        ? `- Exact length: "${primaryResult.file.name}" has exactly ${primaryResult.totalPages
+        } ${primaryResult.unitLabel.toLowerCase()}${primaryResult.totalPages === 1 ? "" : "s"
+        }. Never cite any ${primaryResult.unitLabel.toLowerCase()} number greater than ${primaryResult.totalPages
+        }.`
         : "";
 
     const autoMultiNote = autoMultiDocInfo.isAutoMultiDoc
@@ -383,54 +381,45 @@ export async function POST(req: NextRequest) {
       : "";
 
     const systemPrompt = isMultiDoc
-      ? `You are Quill, an expert AI research assistant operating in Multi-Document Synthesis mode (${
-          isPro ? "PRO Tier" : "Standard Tier"
-        }).
+      ? `You are Quill, an expert AI research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
+      }).
 You are analyzing ${perDocResults.length} participating documents simultaneously:
 ${docInventoryLines}${unloadedLibraryNote}
 
 Your strict instructions:
 - Cross-Document Synthesis: Address EVERY relevant participating document when comparing, summarizing, contrasting, or synthesizing answers. Highlight agreements, contradictions, differences, and complementary insights clearly.
 - Attribution Accuracy: Keep facts cleanly attributed to the exact document they come from—never blend or misattribute details between documents.
-- Precision Clickable Citations: Always cite claims using the exact filename and page/slide number formatted as [ExactFileName.ext • Page X] or [ExactFileName.ext • Slide Y] (matching the headers in context). Never cite a page/slide number higher than a document's stated total.
+- Simple Compact Citations: Cite claims using ONLY concise numbered tags like [1 · p.3] (Page 3 of Document [1]) or [2 · s.5] (Slide 5 of Document [2]). Cite multiple sources side-by-side cleanly as [1 · p.3] [2 · s.5]. Do NOT write long filenames inside citation brackets, and never cite a page/slide higher than a document's stated total.
 - Single-Source Questions in Multi-Doc Mode: If a question only appears in some of the documents, state clearly which document(s) contain the answer and which do not.
 - Library Awareness: If the user asks about another library file listed above that is NOT loaded, tell them its exact name and suggest clicking "Add Document" / asking directly by filename.${autoMultiNote}
 - Ground all facts strictly in the provided document contexts.`
       : isPro
-      ? `You are Quill, an advanced expert AI document tutor operating in PRO High-Quality mode.
-Current Document: "${primaryResult?.file?.name || "Document"}"${
-          primaryResult?.totalPages
-            ? ` (${
-                primaryResult.totalPages
-              } ${primaryResult.unitLabel.toLowerCase()}${
-                primaryResult.totalPages === 1 ? "" : "s"
-              })`
-            : ""
+        ? `You are Quill, an advanced expert AI document tutor operating in PRO High-Quality mode.
+Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.totalPages
+          ? ` (${primaryResult.totalPages
+          } ${primaryResult.unitLabel.toLowerCase()}${primaryResult.totalPages === 1 ? "" : "s"
+          })`
+          : ""
         }${unloadedLibraryNote}
 
 Your goal is to provide exceptional, comprehensive, and deeply analytical insights from the provided document:
 - Deliver thorough, structured explanations with key takeaways, deep technical context, and precise details.
-- Formatting & Citations: Always format with clean Markdown. Include clickable citations like [${
-          primaryResult?.unitLabel || "Page"
+- Formatting & Citations: Always format with clean Markdown. Include clickable citations like [${primaryResult?.unitLabel || "Page"
         } X] whenever available so the user can jump directly to the source.
 ${singlePageConstraint}
 - Other Documents Awareness: Stay focused on the current document unless the user explicitly asks about another uploaded document. If they ask about an unloaded library document listed above, mention it by name and let them know they can ask directly by its name or click "Add Docs" to enter Multi-Doc Chat.
 - Ground all facts strictly in the document context.`
-      : `You are Quill, an expert AI document assistant.
-Current Document: "${primaryResult?.file?.name || "Document"}"${
-          primaryResult?.totalPages
-            ? ` (${
-                primaryResult.totalPages
-              } ${primaryResult.unitLabel.toLowerCase()}${
-                primaryResult.totalPages === 1 ? "" : "s"
-              })`
-            : ""
+        : `You are Quill, an expert AI document assistant.
+Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.totalPages
+          ? ` (${primaryResult.totalPages
+          } ${primaryResult.unitLabel.toLowerCase()}${primaryResult.totalPages === 1 ? "" : "s"
+          })`
+          : ""
         }${unloadedLibraryNote}
 
 Your goal is to help the user understand their uploaded document:
 - Provide clear, direct, and concise answers based strictly on the document context.
-- Formatting & Citations: Use Markdown and cite references like [${
-          primaryResult?.unitLabel || "Page"
+- Formatting & Citations: Use Markdown and cite references like [${primaryResult?.unitLabel || "Page"
         } X] where identifiable.
 ${singlePageConstraint}
 - Other Documents Awareness: If the user asks about an unloaded library document listed above, mention it by exact name and let them know they can reference it directly or tap "Add Docs" for Multi-Doc Chat.`;
@@ -454,16 +443,25 @@ ${singlePageConstraint}
     });
 
     console.log(
-      `[message/route] Generating answer with model: ${activeModel} (multiDoc=${isMultiDoc}, autoMulti=${autoMultiDocInfo.isAutoMultiDoc}, ${
-        isPro ? "PRO Tier" : "Free Tier"
+      `[message/route] Generating answer with model: ${activeModel} (multiDoc=${isMultiDoc}, autoMulti=${autoMultiDocInfo.isAutoMultiDoc}, ${isPro ? "PRO Tier" : "Free Tier"
       })`
     );
 
-    const stream = OpenAIStream(response as any, {
+    const autoSourcesFooter = autoMultiDocInfo.isAutoMultiDoc
+      ? `\n\nSources: ${perDocResults
+          .map((res, idx) => `[${idx + 1}] ${res.file.name}`)
+          .join(" | ")}`
+      : "";
+
+    const rawStream = OpenAIStream(response as any, {
       async onCompletion(completion) {
+        const finalText =
+          autoSourcesFooter && !completion.includes("Sources:")
+            ? `${completion}${autoSourcesFooter}`
+            : completion;
         await db.message.create({
           data: {
-            text: completion,
+            text: finalText,
             isUserMessage: false,
             fileId,
             userId,
@@ -471,6 +469,29 @@ ${singlePageConstraint}
         });
       },
     });
+
+    const stream = autoSourcesFooter
+      ? (() => {
+          const encoder = new TextEncoder();
+          const decoder = new TextDecoder();
+          let tail = "";
+          return rawStream.pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                tail = (tail + decoder.decode(chunk, { stream: true })).slice(
+                  -180
+                );
+                controller.enqueue(chunk);
+              },
+              flush(controller) {
+                if (!tail.includes("Sources:")) {
+                  controller.enqueue(encoder.encode(autoSourcesFooter));
+                }
+              },
+            })
+          );
+        })()
+      : rawStream;
 
     const responseHeaders: Record<string, string> = {};
     if (autoMultiDocInfo.isAutoMultiDoc) {

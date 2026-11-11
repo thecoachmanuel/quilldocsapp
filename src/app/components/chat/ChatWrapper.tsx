@@ -3,6 +3,7 @@ import { useState, useEffect, useContext } from "react";
 import { trpc } from "@/app/_trpc/client";
 import ChatInput from "./ChatInput";
 import Messages from "./Messages";
+import { DocSourceRef } from "./Message";
 import { ChevronLeft, Loader2, XCircle, Layers } from "lucide-react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,6 +13,7 @@ interface ChatWrapperProps {
   fileId: string;
   fileIds?: string[];
   docNames?: string[];
+  docSources?: DocSourceRef[];
   isExpanded?: boolean;
   planName?: string;
   pagesPerPdf?: number;
@@ -49,6 +51,7 @@ function ChatWrapper({
   fileId,
   fileIds,
   docNames,
+  docSources,
   isExpanded = false,
   planName = "Free",
   pagesPerPdf = 5,
@@ -154,6 +157,7 @@ function ChatWrapper({
             fileId={fileId}
             isExpanded={isExpanded}
             docNames={docNames}
+            docSources={docSources}
           />
         </div>
 

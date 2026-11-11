@@ -145,17 +145,20 @@ export default function MultiDocumentViewLayout({
   // Handle jump-to-doc citations from AI messages
   useEffect(() => {
     const handleJumpToDoc = (e: any) => {
-      const { docName, page, type } = e.detail || {};
-      if (!docName) return;
+      const { docId, docName, page, type } = e.detail || {};
+      if (!docId && !docName) return;
 
-      const lowerDoc = docName.toLowerCase();
+      const lowerDoc = (docName || "").toLowerCase();
       const findMatch = (list: DocumentInfo[]) =>
-        list.find((f) => f.name.toLowerCase() === lowerDoc) ||
-        list.find(
-          (f) =>
-            f.name.toLowerCase().includes(lowerDoc) ||
-            lowerDoc.includes(f.name.toLowerCase())
-        );
+        (docId ? list.find((f) => f.id === docId) : undefined) ||
+        (lowerDoc
+          ? list.find((f) => f.name.toLowerCase() === lowerDoc) ||
+            list.find(
+              (f) =>
+                f.name.toLowerCase().includes(lowerDoc) ||
+                lowerDoc.includes(f.name.toLowerCase())
+            )
+          : undefined);
 
       let target = findMatch(selectedFiles);
       if (!target) {
@@ -265,7 +268,7 @@ export default function MultiDocumentViewLayout({
               Sources ({selectedFiles.length}):
             </span>
 
-            {selectedFiles.map((file) => {
+            {selectedFiles.map((file, idx) => {
               const isActive = file.id === activeFile?.id;
               return (
                 <div
@@ -278,6 +281,18 @@ export default function MultiDocumentViewLayout({
                       : "bg-zinc-100/80 text-zinc-600 border-zinc-200/80 hover:bg-zinc-200/60"
                   )}
                 >
+                  {selectedFiles.length > 1 && (
+                    <span
+                      className={cn(
+                        "inline-flex h-4 min-w-[16px] items-center justify-center rounded px-1 text-[10px] font-bold leading-none shrink-0",
+                        isActive
+                          ? "bg-blue-600 text-white"
+                          : "bg-zinc-200/90 text-zinc-700"
+                      )}
+                    >
+                      {idx + 1}
+                    </span>
+                  )}
                   {getFileIcon(file.name)}
                   <span className="truncate max-w-[130px] sm:max-w-[190px]">
                     {file.name}
@@ -486,6 +501,10 @@ export default function MultiDocumentViewLayout({
               fileId={multiSessionId}
               fileIds={selectedFiles.map((f) => f.id)}
               docNames={selectedFiles.map((f) => f.name)}
+              docSources={selectedFiles.map((f) => ({
+                id: f.id,
+                name: f.name,
+              }))}
               isExpanded={isChatExpanded}
               planName={planName}
               pagesPerPdf={pagesPerPdf}

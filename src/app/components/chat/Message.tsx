@@ -6,14 +6,200 @@ import { format } from "date-fns";
 import { forwardRef, useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
 
+export interface DocSourceRef {
+  id?: string;
+  name: string;
+}
+
 interface MessageProps {
   message: ExtendedMessage;
   isNextMessageSamePerson: boolean;
   isExpanded?: boolean;
+  docSources?: DocSourceRef[];
+}
+
+interface ParsedMessageCitations {
+  formattedText: string | JSX.Element;
+  effectiveSources: DocSourceRef[];
+  citedIndices: number[];
+}
+
+function parseSourcesFooter(rawText: string): {
+  bodyText: string;
+  footerSources: DocSourceRef[];
+} {
+  const footerMatch = rawText.match(
+    /\n+(?:\*\*)?Sources:(?:\*\*)?\s*((?:\[\d+\][\s\S]+?))$/i
+  );
+  if (!footerMatch) {
+    return { bodyText: rawText, footerSources: [] };
+  }
+
+  const footerStr = footerMatch[1].trim();
+  const entries: Array<{ idx: number; name: string }> = [];
+  const itemRegex = /\[(\d+)\]\s*([^|\n]+?)(?=\s*(?:[|·]\s*)?\[\d+\]|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = itemRegex.exec(footerStr)) !== null) {
+    const idx = parseInt(m[1], 10);
+    const name = m[2].trim();
+    if (!isNaN(idx) && idx > 0 && name) {
+      entries.push({ idx, name });
+    }
+  }
+
+  if (entries.length === 0) {
+    return { bodyText: rawText, footerSources: [] };
+  }
+
+  const maxIdx = Math.max(...entries.map((e) => e.idx));
+  const footerSources: DocSourceRef[] = Array.from(
+    { length: maxIdx },
+    (_, i) => {
+      const found = entries.find((e) => e.idx === i + 1);
+      return { id: "", name: found?.name || `Document ${i + 1}` };
+    }
+  );
+
+  return {
+    bodyText: rawText.slice(0, footerMatch.index).trimEnd(),
+    footerSources,
+  };
+}
+
+function formatMessageCitations(
+  rawText: string,
+  propSources: DocSourceRef[] = []
+): ParsedMessageCitations {
+  const { bodyText, footerSources } = parseSourcesFooter(rawText);
+
+  const effectiveSources: DocSourceRef[] =
+    propSources.length >= footerSources.length
+      ? propSources
+      : footerSources.map((fs, i) => ({
+          id: propSources[i]?.id || fs.id || "",
+          name: propSources[i]?.name || fs.name,
+        }));
+
+  const citedSet = new Set<number>();
+
+  // Match priority in a single left-to-right pass to prevent nested replacement:
+  // 1) Compact indexed citations: [1 · p.4], [1, Page 4], [Doc 2 · s.5], (1 · p.3-4)
+  // 2) Full filename citations: [Report.pdf • Page 4], [Source: Deck.pptx, Slide 2]
+  // 3) Single-doc citations: [Page 4], [Slide 2]
+  // 4) Bare multi-doc index citations (only when multi-doc sources exist): [1], [Doc 2]
+  const combinedRegex = new RegExp(
+    [
+      "(?:\\[|\\()(?:Doc(?:ument)?\\s*|D)?([0-9]{1,2})\\s*(?:•|·|\\||-|–|,|:)?\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))",
+      "(?:\\[|\\()(?:Source:\\s*)?([^\\]\\)]+?\\.(?:pdf|docx?|pptx?))\\s*(?:•|·|\\||-|–|,|:)\\s*(?:(p\\.?|pages?)|(s\\.?|slides?))\\s*([0-9]+)(?:\\s*[-–]\\s*[0-9]+)?(?:\\]|\\))",
+      "(?:\\[|\\()?(Page|Slide)s?\\s*([0-9]+)(?:\\]|\\))?",
+      "(^|[^\\w\\]])\\[(?:Doc(?:ument)?\\s*)?([1-9][0-9]?)\\](?!\\()",
+    ].join("|"),
+    "gi"
+  );
+
+  const formattedText = bodyText.replace(
+    combinedRegex,
+    (
+      match,
+      idxNum,
+      idxPageUnit,
+      idxSlideUnit,
+      idxStartPage,
+      idxEndPage,
+      docName,
+      docPageUnit,
+      docSlideUnit,
+      docPageNum,
+      singleUnit,
+      singleNum,
+      barePrefix,
+      bareIdx
+    ) => {
+      // Branch 1: Indexed citation [1 · p.4]
+      if (idxNum && idxStartPage) {
+        const docIdx = parseInt(idxNum, 10);
+        if (docIdx >= 1 && docIdx <= effectiveSources.length) {
+          citedSet.add(docIdx);
+          const isSlide = Boolean(idxSlideUnit);
+          const unit = isSlide ? "slide" : "page";
+          const unitShort = isSlide ? "s" : "p";
+          const rangeLabel = idxEndPage
+            ? `${idxStartPage}-${idxEndPage}`
+            : idxStartPage;
+          return `[${docIdx} · ${unitShort}.${rangeLabel}](#jump-idx-${docIdx}-${unit}-${idxStartPage})`;
+        }
+        return match;
+      }
+
+      // Branch 2: Legacy/explicit filename citation [Report.pdf • Page 4]
+      if (docName && docPageNum) {
+        const cleanDoc = docName.trim();
+        const isSlide = Boolean(docSlideUnit);
+        const unit = isSlide ? "slide" : "page";
+        const unitShort = isSlide ? "s" : "p";
+
+        const matchedIndex = effectiveSources.findIndex(
+          (s) =>
+            s.name.toLowerCase() === cleanDoc.toLowerCase() ||
+            s.name.toLowerCase().includes(cleanDoc.toLowerCase()) ||
+            cleanDoc.toLowerCase().includes(s.name.toLowerCase())
+        );
+
+        if (matchedIndex !== -1 && effectiveSources.length > 1) {
+          const docIdx = matchedIndex + 1;
+          citedSet.add(docIdx);
+          return `[${docIdx} · ${unitShort}.${docPageNum}](#jump-idx-${docIdx}-${unit}-${docPageNum})`;
+        }
+
+        const displayUnit = isSlide ? "Slide" : "Page";
+        return `[${cleanDoc} • ${displayUnit} ${docPageNum}](#jump-doc-${encodeURIComponent(
+          cleanDoc
+        )}-${unit}-${docPageNum})`;
+      }
+
+      // Branch 3: Single-document citation [Page 4] / [Slide 2]
+      if (singleUnit && singleNum) {
+        const unitTitle =
+          singleUnit.charAt(0).toUpperCase() +
+          singleUnit.slice(1).toLowerCase();
+        return `[${unitTitle} ${singleNum}](#jump-${singleUnit.toLowerCase()}-${singleNum})`;
+      }
+
+      // Branch 4: Bare multi-doc reference [1] / [Doc 2]
+      if (bareIdx) {
+        const docIdx = parseInt(bareIdx, 10);
+        if (
+          effectiveSources.length > 1 &&
+          docIdx >= 1 &&
+          docIdx <= effectiveSources.length
+        ) {
+          citedSet.add(docIdx);
+          return `${barePrefix || ""}[${docIdx}](#jump-idx-${docIdx}-page-0)`;
+        }
+        return match;
+      }
+
+      return match;
+    }
+  );
+
+  // Include footer sources in legend whenever multi-doc response used footer mapping
+  if (footerSources.length > 1 && citedSet.size === 0) {
+    footerSources.forEach((_, idx) => citedSet.add(idx + 1));
+  }
+
+  return {
+    formattedText,
+    effectiveSources,
+    citedIndices: Array.from(citedSet).sort((a, b) => a - b),
+  };
 }
 
 const Message = forwardRef<HTMLDivElement, MessageProps>(
-  ({ message, isNextMessageSamePerson, isExpanded = false }, ref) => {
+  (
+    { message, isNextMessageSamePerson, isExpanded = false, docSources = [] },
+    ref
+  ) => {
     const [hasCopied, setHasCopied] = useState<boolean>(false);
 
     const handleCopy = () => {
@@ -24,31 +210,16 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
       }
     };
 
-    // Pre-process citations in a single pass so multi-doc links aren't nested:
-    // 1. Multi-doc citations: [Doc.pdf • Page 3], [Source: Doc.pdf, Slide 2]
-    // 2. Single doc citations: [Page 3], [Slide 2]
-    const formattedText =
+    const parsed: ParsedMessageCitations =
       typeof message.text === "string" && !message.isUserMessage
-        ? message.text.replace(
-            /(?:\[|\()(?:Source:\s*)?([^\]\)]+?\.(?:pdf|docx?|pptx?))\s*(?:•|\||-|–|,|:)\s*(Page|Slide)s?\s*([0-9]+)(?:\s*[-–]\s*[0-9]+)?(?:\]|\))|(?:\[|\()?(Page|Slide)s?\s*([0-9]+)(?:\]|\))?/gi,
-            (match, doc, mType, mNum, sType, sNum) => {
-              if (doc && mType && mNum) {
-                const cleanDoc = doc.trim();
-                const unit =
-                  mType.charAt(0).toUpperCase() + mType.slice(1).toLowerCase();
-                return `[${cleanDoc} • ${unit} ${mNum}](#jump-doc-${encodeURIComponent(
-                  cleanDoc
-                )}-${mType.toLowerCase()}-${mNum})`;
-              }
-              if (sType && sNum) {
-                const unit =
-                  sType.charAt(0).toUpperCase() + sType.slice(1).toLowerCase();
-                return `[${unit} ${sNum}](#jump-${sType.toLowerCase()}-${sNum})`;
-              }
-              return match;
-            }
-          )
-        : message.text;
+        ? formatMessageCitations(message.text, docSources)
+        : {
+            formattedText: message.text,
+            effectiveSources: docSources,
+            citedIndices: [],
+          };
+
+    const { formattedText, effectiveSources, citedIndices } = parsed;
 
     return (
       <div
@@ -79,17 +250,17 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
             "flex flex-col space-y-2 text-base mx-2 group relative transition-all duration-300",
             message.isUserMessage
               ? cn(
-                "order-1 items-end",
-                isExpanded
-                  ? "max-w-[90%] sm:max-w-[85%] lg:max-w-4xl xl:max-w-5xl"
-                  : "max-w-[85%] sm:max-w-[78%] lg:max-w-2xl"
-              )
+                  "order-1 items-end",
+                  isExpanded
+                    ? "max-w-[90%] sm:max-w-[85%] lg:max-w-4xl xl:max-w-5xl"
+                    : "max-w-[85%] sm:max-w-[78%] lg:max-w-2xl"
+                )
               : cn(
-                "order-2 items-start",
-                isExpanded
-                  ? "max-w-[96%] sm:max-w-[92%] lg:max-w-5xl xl:max-w-6xl"
-                  : "max-w-[92%] sm:max-w-[88%] lg:max-w-[88%] xl:max-w-[86%]"
-              )
+                  "order-2 items-start",
+                  isExpanded
+                    ? "max-w-[96%] sm:max-w-[92%] lg:max-w-5xl xl:max-w-6xl"
+                    : "max-w-[92%] sm:max-w-[88%] lg:max-w-[88%] xl:max-w-[86%]"
+                )
           )}
         >
           <div
@@ -112,6 +283,48 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                 })}
                 components={{
                   a: ({ href, children, ...props }) => {
+                    if (href?.startsWith("#jump-idx-")) {
+                      const parts = href.replace("#jump-idx-", "").split("-");
+                      const docIdx = parseInt(parts[0], 10);
+                      const type = parts[1] || "page";
+                      const num = parseInt(parts[2], 10);
+                      const source = effectiveSources[docIdx - 1];
+                      const validPage = !isNaN(num) && num > 0 ? num : undefined;
+
+                      return (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.dispatchEvent(
+                              new CustomEvent("quill:jump-to-doc", {
+                                detail: {
+                                  docId: source?.id || undefined,
+                                  docName:
+                                    source?.name || `Document ${docIdx}`,
+                                  page: validPage,
+                                  type,
+                                },
+                              })
+                            );
+                          }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-[11px] font-semibold bg-blue-100/90 hover:bg-blue-200 text-blue-800 border border-blue-300/80 transition-all cursor-pointer not-prose align-baseline active:scale-95 select-none"
+                          title={
+                            source?.name
+                              ? validPage
+                                ? `${source.name} — ${
+                                    type === "slide" ? "Slide" : "Page"
+                                  } ${validPage}`
+                                : `Switch to ${source.name}`
+                              : undefined
+                          }
+                        >
+                          <span>{children}</span>
+                        </button>
+                      );
+                    }
+
                     if (href?.startsWith("#jump-doc-")) {
                       const rest = href.replace("#jump-doc-", "");
                       const lastHyphen = rest.lastIndexOf("-");
@@ -135,7 +348,11 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                             e.stopPropagation();
                             window.dispatchEvent(
                               new CustomEvent("quill:jump-to-doc", {
-                                detail: { docName, page: num, type },
+                                detail: {
+                                  docName,
+                                  page: isNaN(num) ? undefined : num,
+                                  type,
+                                },
                               })
                             );
                           }}
@@ -191,14 +408,56 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                 {formattedText}
               </ReactMarkdown>
             ) : (
-              message.text
+              formattedText
             )}
+
+            {/* Compact Multi-Document Sources Key */}
+            {!message.isUserMessage &&
+              effectiveSources.length > 1 &&
+              citedIndices.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-zinc-300/80 flex flex-wrap items-center gap-1.5 not-prose">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mr-0.5">
+                    Sources:
+                  </span>
+                  {citedIndices.map((docIdx) => {
+                    const src = effectiveSources[docIdx - 1];
+                    if (!src) return null;
+                    return (
+                      <button
+                        key={`${docIdx}-${src.name}`}
+                        type="button"
+                        onClick={() => {
+                          window.dispatchEvent(
+                            new CustomEvent("quill:jump-to-doc", {
+                              detail: {
+                                docId: src.id || undefined,
+                                docName: src.name,
+                              },
+                            })
+                          );
+                        }}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-blue-50 text-zinc-700 hover:text-blue-700 border border-zinc-300 hover:border-blue-300 text-[11px] font-medium transition-colors max-w-[190px]"
+                        title={`Open ${src.name}`}
+                      >
+                        <span className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded bg-blue-600 text-white text-[9px] font-bold px-0.5 shrink-0">
+                          {docIdx}
+                        </span>
+                        <span className="truncate">{src.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
             {message.id !== "loading-message" ? (
               <div
-                className={cn("text-xs select-none mt-2 w-full flex items-center justify-between gap-2", {
-                  "text-zinc-500": !message.isUserMessage,
-                  "text-blue-300 justify-end": message.isUserMessage,
-                })}
+                className={cn(
+                  "text-xs select-none mt-2 w-full flex items-center justify-between gap-2",
+                  {
+                    "text-zinc-500": !message.isUserMessage,
+                    "text-blue-300 justify-end": message.isUserMessage,
+                  }
+                )}
               >
                 {!message.isUserMessage ? (
                   <button
@@ -211,7 +470,9 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                     {hasCopied ? (
                       <>
                         <Check className="h-3 w-3 text-green-600" />
-                        <span className="text-green-700 font-semibold">Copied</span>
+                        <span className="text-green-700 font-semibold">
+                          Copied
+                        </span>
                       </>
                     ) : (
                       <>

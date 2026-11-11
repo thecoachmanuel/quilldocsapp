@@ -2,7 +2,7 @@ import Link from "next/link";
 import MaxWidthWrapper from "./components/MaxWidthWrapper";
 import Footer from "./components/Footer";
 import { buttonVariants } from "@/components/ui/button";
-import { ArrowRight, Globe } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 
 export default function Home() {
@@ -24,11 +24,6 @@ export default function Home() {
           teach and explain it to you in <strong>any language</strong> you
           prefer.
         </p>
-
-        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/80 px-3.5 py-1 text-xs sm:text-sm font-medium text-blue-700">
-          <Globe className="h-4 w-4 shrink-0 text-blue-600" />
-          <span>Upload in any language &bull; Learn in any language</span>
-        </div>
 
         <Link
           className={buttonVariants({

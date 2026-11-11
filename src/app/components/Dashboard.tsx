@@ -8,7 +8,6 @@ import {
   FileText,
   Gem,
   Ghost,
-  Globe,
   Loader2,
   MessageSquare,
   Plus,
@@ -145,13 +144,6 @@ const Dashboard = ({ subscriptionPlan, upgradePlan = null }: PageProps) => {
               </Link>
             )}
           </div>
-          <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-zinc-500">
-            <Globe className="h-3.5 w-3.5 text-blue-600 shrink-0" />
-            <span>
-              Upload any document in any language &bull; Ask our AI tutor to
-              teach you in any language
-            </span>
-          </p>
         </div>
 
         <div className="flex items-center gap-2.5">

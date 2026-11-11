@@ -74,7 +74,7 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-disc pl-5 space-y-2 text-zinc-600">
                 <li><strong>Kinde:</strong> Enterprise-grade identity verification and role-based access control.</li>
-                <li><strong>Stripe:</strong> PCI-DSS certified payment processing (we never store raw credit card numbers).</li>
+                <li><strong>Paystack:</strong> PCI-DSS certified payment processing (we never store raw credit card numbers).</li>
                 <li><strong>Pinecone:</strong> Managed vector database for real-time document semantic retrieval.</li>
                 <li><strong>Cloud AI Inference Providers:</strong> High-performance, SOC 2 compliant inference infrastructure for context synthesis and document analysis.</li>
               </ul>

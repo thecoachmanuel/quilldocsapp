@@ -1,4 +1,4 @@
-import { getUserSubscriptionPlan } from "@/lib/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 
 import Image from "next/image";
 import { Icons } from "./Icons";

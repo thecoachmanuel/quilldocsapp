@@ -8,8 +8,8 @@ import { useToast } from "./ui/use-toast";
 function UpgradeButton() {
   const { toast } = useToast();
 
-  const { mutate: createStripeSession, isLoading } =
-    trpc.createStripeSession.useMutation({
+  const { mutate: createPaystackSession, isLoading } =
+    trpc.createPaystackSession.useMutation({
       onSuccess: ({ url }) => {
         if (url) {
           window.location.href = url;
@@ -34,7 +34,7 @@ function UpgradeButton() {
   return (
     <Button
       disabled={isLoading}
-      onClick={() => createStripeSession()}
+      onClick={() => createPaystackSession()}
       className="w-full"
     >
       {isLoading ? (

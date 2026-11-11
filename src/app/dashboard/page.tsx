@@ -1,7 +1,7 @@
 import { getKindeServerSession } from "@/lib/kinde";
 import { redirect } from "next/navigation";
 import Dashboard from "../components/Dashboard";
-import { getUserSubscriptionPlan } from "@/lib/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { ensureDbUser } from "@/lib/auth-rbac";
 
 export const dynamic = "force-dynamic";

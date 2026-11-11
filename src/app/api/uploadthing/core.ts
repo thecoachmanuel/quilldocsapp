@@ -2,8 +2,8 @@ import { getKindeServerSession } from "@/lib/kinde";
 import { ensureDbUser } from "@/lib/auth-rbac";
 import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { db } from "@/db";
-import { getUserSubscriptionPlan } from "@/lib/stripe";
-import { PLANS } from "@/config/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
+import { PLANS } from "@/config/plans";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { parseDocument } from "@/lib/document-parser";
 

@@ -41,7 +41,7 @@
 * **Authentication**: Kinde Auth (OAuth, Social, Passwordless).
 * **Vector Database**: Pinecone Serverless Vector Search.
 * **File Storage**: UploadThing (Vercel serverless) / Direct server uploads.
-* **Payments**: Paystack API & Webhooks (Primary), Stripe (Fallback).
+* **Payments**: Paystack API & Webhooks (NGN & International Cards).
 
 ---
 

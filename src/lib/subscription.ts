@@ -1,26 +1,7 @@
-import { PLANS } from "@/config/stripe";
+import { PLANS } from "@/config/plans";
 import { db, DEFAULT_PLAN_CONFIGS } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
 import { isPaystackConfigured } from "@/lib/paystack";
-import Stripe from "stripe";
-
-function cleanStripeEnv(val?: string): string {
-  return val ? val.replace(/^['"]|['"]$/g, "").trim() : "";
-}
-
-export function isStripeConfigured(): boolean {
-  const key = cleanStripeEnv(process.env.STRIPE_SECRET_KEY);
-  return Boolean(
-    key &&
-      (key.startsWith("sk_test_") || key.startsWith("sk_live_")) &&
-      !key.includes("<your")
-  );
-}
-
-export const stripe = new Stripe(cleanStripeEnv(process.env.STRIPE_SECRET_KEY), {
-  apiVersion: "2023-08-16",
-  typescript: true,
-});
 
 export interface DynamicPlan {
   id: string;
@@ -35,11 +16,13 @@ export interface DynamicPlan {
   price: {
     amount: number;
     amountNgn: number;
-    priceIds: {
-      test: string;
-      production: string;
-    };
   };
+}
+
+export interface SubscriptionRecordFields {
+  planPriceId?: string | null;
+  subscriptionId?: string | null;
+  currentPeriodEnd?: string | Date | null;
 }
 
 /**
@@ -75,15 +58,11 @@ export async function getDynamicPlans(): Promise<DynamicPlan[]> {
               : c.slug === "pro"
               ? 18000
               : 0,
-          priceIds: {
-            test: c.stripePriceId || (c.slug === "pro" ? "price_1OQrcuKMJjiqL9lYEEU1nxSz" : ""),
-            production: c.stripePriceId || "",
-          },
         },
       }));
     }
   } catch (err) {
-    console.warn("[stripe] Fallback to static PLANS:", err);
+    console.warn("[subscription] Fallback to static PLANS:", err);
   }
 
   return PLANS.map((p) => ({
@@ -96,7 +75,7 @@ export async function getDynamicPlans(): Promise<DynamicPlan[]> {
         : "For small side projects.",
     quota: p.quota,
     pagesPerPdf: p.pagesPerPdf,
-    maxFileSizeMB: p.slug === "pro" ? 16 : 4,
+    maxFileSizeMB: p.maxFileSizeMB ?? (p.slug === "pro" ? 16 : 4),
     features:
       p.slug === "pro"
         ? [
@@ -114,45 +93,37 @@ export async function getDynamicPlans(): Promise<DynamicPlan[]> {
     isPopular: p.slug === "pro",
     price: {
       amount: p.price.amount,
-      amountNgn: p.slug === "pro" ? 18000 : 0,
-      priceIds: p.price.priceIds,
+      amountNgn: p.price.amountNgn ?? (p.slug === "pro" ? 18000 : 0),
     },
   }));
 }
 
-export function isUserRecordSubscribed(userRecord: {
-  stripePriceId?: string | null;
-  stripeSubscriptionId?: string | null;
-  stripeCurrentPeriodEnd?: string | Date | null;
-}): boolean {
-  const periodEnd = userRecord.stripeCurrentPeriodEnd
-    ? new Date(userRecord.stripeCurrentPeriodEnd)
+export function isUserRecordSubscribed(
+  userRecord: SubscriptionRecordFields
+): boolean {
+  const periodEnd = userRecord.currentPeriodEnd
+    ? new Date(userRecord.currentPeriodEnd)
     : null;
 
   const isSimulatedSub = Boolean(
-    userRecord.stripeSubscriptionId?.startsWith("sub_test_")
+    userRecord.subscriptionId?.startsWith("sub_test_")
   );
   const ignoreSimulatedSub =
     isSimulatedSub &&
     (isPaystackConfigured() ||
-      isStripeConfigured() ||
       process.env.VERCEL === "1" ||
       process.env.NODE_ENV === "production");
 
   return Boolean(
     !ignoreSimulatedSub &&
-      userRecord.stripePriceId &&
+      userRecord.planPriceId &&
       periodEnd &&
       periodEnd.getTime() + 86_400_000 > Date.now()
   );
 }
 
 export function resolveUserPlanFromPlans(
-  userRecord: {
-    stripePriceId?: string | null;
-    stripeSubscriptionId?: string | null;
-    stripeCurrentPeriodEnd?: string | Date | null;
-  },
+  userRecord: SubscriptionRecordFields,
   dynamicPlans: DynamicPlan[]
 ): { plan: DynamicPlan; isSubscribed: boolean } {
   const freePlan =
@@ -164,10 +135,10 @@ export function resolveUserPlanFromPlans(
   const plan = isSubscribed
     ? dynamicPlans.find(
         (p) =>
-          p.slug === userRecord.stripePriceId ||
-          p.price.priceIds.test === userRecord.stripePriceId ||
-          p.price.priceIds.production === userRecord.stripePriceId ||
-          (userRecord.stripePriceId === "pro" && p.slug === "pro")
+          p.slug === userRecord.planPriceId ||
+          ((userRecord.planPriceId === "pro" ||
+            userRecord.planPriceId?.startsWith("price_")) &&
+            p.slug === "pro")
       ) || proPlan
     : freePlan;
 
@@ -184,9 +155,9 @@ export async function getUserSubscriptionPlan() {
   if (!user?.id) {
     return {
       ...freePlan,
-      stripeSubscriptionId: null,
-      stripeCurrentPeriodEnd: null,
-      stripeCustomerId: null,
+      subscriptionId: null,
+      currentPeriodEnd: null,
+      customerId: null,
       isSubscribed: false,
       isCanceled: false,
     };
@@ -194,52 +165,34 @@ export async function getUserSubscriptionPlan() {
 
   const dbUser = await db.user.findFirst({
     where: {
-      id: user?.id,
+      id: user.id,
     },
   });
 
   if (!dbUser) {
     return {
       ...freePlan,
-      stripeSubscriptionId: null,
-      stripeCurrentPeriodEnd: null,
-      stripeCustomerId: null,
+      subscriptionId: null,
+      currentPeriodEnd: null,
+      customerId: null,
       isSubscribed: false,
       isCanceled: false,
     };
   }
 
-  const periodEnd = dbUser.stripeCurrentPeriodEnd
-    ? new Date(dbUser.stripeCurrentPeriodEnd)
+  const periodEnd = dbUser.currentPeriodEnd
+    ? new Date(dbUser.currentPeriodEnd)
     : null;
 
   const { plan, isSubscribed } = resolveUserPlanFromPlans(dbUser, dynamicPlans);
 
-  let isCanceled = false;
-  if (
-    isSubscribed &&
-    dbUser.stripeSubscriptionId &&
-    isStripeConfigured() &&
-    !dbUser.stripeSubscriptionId.startsWith("paystack_") &&
-    !dbUser.stripeSubscriptionId.startsWith("sub_test_") &&
-    !dbUser.stripeSubscriptionId.startsWith("sub_admin_")
-  ) {
-    try {
-      const stripePlan = await stripe.subscriptions.retrieve(
-        dbUser.stripeSubscriptionId
-      );
-      isCanceled = stripePlan.cancel_at_period_end;
-    } catch {
-      isCanceled = false;
-    }
-  }
-
   return {
     ...plan,
-    stripeSubscriptionId: dbUser.stripeSubscriptionId,
-    stripeCurrentPeriodEnd: periodEnd,
-    stripeCustomerId: dbUser.stripeCustomerId,
+    subscriptionId: dbUser.subscriptionId,
+    currentPeriodEnd: periodEnd,
+    customerId: dbUser.customerId,
     isSubscribed,
-    isCanceled,
+    isCanceled: false,
   };
 }
+

@@ -51,7 +51,6 @@ async function main() {
         "Standard-quality AI responses",
       ],
       isPopular: false,
-      stripePriceId: "",
     },
     {
       slug: "pro",
@@ -71,7 +70,6 @@ async function main() {
         "Priority customer support",
       ],
       isPopular: true,
-      stripePriceId: "price_1OQrcuKMJjiqL9lYEEU1nxSz",
     },
   ];
 
@@ -122,15 +120,20 @@ async function main() {
           name: u.name || null,
           role: u.role || "USER",
           status: u.status || "ACTIVE",
-          stripePriceId: u.stripePriceId || null,
-          stripeCurrentPeriodEnd: u.stripeCurrentPeriodEnd ? new Date(u.stripeCurrentPeriodEnd) : null,
+          planPriceId: u.planPriceId || u.stripePriceId || null,
+          currentPeriodEnd:
+            u.currentPeriodEnd || u.stripeCurrentPeriodEnd
+              ? new Date(u.currentPeriodEnd || u.stripeCurrentPeriodEnd)
+              : null,
         };
 
-        if (u.stripeCustomerId && u.stripeCustomerId.trim() !== "") {
-          userData.stripeCustomerId = u.stripeCustomerId.trim();
+        const cid = u.customerId || u.stripeCustomerId;
+        if (cid && cid.trim() !== "") {
+          userData.customerId = cid.trim();
         }
-        if (u.stripeSubscriptionId && u.stripeSubscriptionId.trim() !== "") {
-          userData.stripeSubscriptionId = u.stripeSubscriptionId.trim();
+        const sid = u.subscriptionId || u.stripeSubscriptionId;
+        if (sid && sid.trim() !== "") {
+          userData.subscriptionId = sid.trim();
         }
 
         const existingUser = await prisma.user.findFirst({

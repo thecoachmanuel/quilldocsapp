@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { getKindeServerSession, RegisterLink } from "@/lib/kinde";
-import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/stripe";
+import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
 
 import { ArrowRight, Check, HelpCircle } from "lucide-react";
 import Link from "next/link";

@@ -4,12 +4,10 @@ export const PLANS = [
     slug: "free",
     quota: 10,
     pagesPerPdf: 5,
+    maxFileSizeMB: 4,
     price: {
       amount: 0,
-      priceIds: {
-        test: "",
-        production: "",
-      },
+      amountNgn: 0,
     },
   },
   {
@@ -17,12 +15,11 @@ export const PLANS = [
     slug: "pro",
     quota: 50,
     pagesPerPdf: 25,
+    maxFileSizeMB: 16,
     price: {
       amount: 14,
-      priceIds: {
-        test: "price_1OQrcuKMJjiqL9lYEEU1nxSz",
-        production: "",
-      },
+      amountNgn: 18000,
     },
   },
 ];
+

@@ -53,7 +53,6 @@ export default function PlansManagement() {
   const [quota, setQuota] = useState<number>(10);
   const [pagesPerPdf, setPagesPerPdf] = useState<number>(5);
   const [maxFileSizeMB, setMaxFileSizeMB] = useState<number>(4);
-  const [stripePriceId, setStripePriceId] = useState("");
   const [isPopular, setIsPopular] = useState(false);
   const [features, setFeatures] = useState<string[]>([]);
   const [newFeatureInput, setNewFeatureInput] = useState("");
@@ -150,7 +149,6 @@ export default function PlansManagement() {
     setQuota(100);
     setPagesPerPdf(50);
     setMaxFileSizeMB(32);
-    setStripePriceId("");
     setIsPopular(false);
     setFeatures([
       "100 documents quota",
@@ -174,7 +172,6 @@ export default function PlansManagement() {
     setQuota(Number(plan.quota ?? 10));
     setPagesPerPdf(Number(plan.pagesPerPdf ?? 5));
     setMaxFileSizeMB(Number(plan.maxFileSizeMB ?? 4));
-    setStripePriceId(plan.price?.priceIds?.test || "");
     setIsPopular(Boolean(plan.isPopular));
     setFeatures(Array.isArray(plan.features) ? [...plan.features] : []);
     setNewFeatureInput("");
@@ -227,7 +224,6 @@ export default function PlansManagement() {
         maxFileSizeMB,
         features: cleanedFeatures,
         isPopular,
-        stripePriceId,
       });
     } else {
       createPlanMutation.mutate({
@@ -241,7 +237,6 @@ export default function PlansManagement() {
         maxFileSizeMB,
         features: cleanedFeatures,
         isPopular,
-        stripePriceId,
       });
     }
   };
@@ -564,32 +559,19 @@ export default function PlansManagement() {
               </div>
             </div>
 
-            {/* Stripe Price ID & Highlight Toggle */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Stripe Price ID (Optional)
-                </label>
-                <Input
-                  placeholder="price_1O..."
-                  value={stripePriceId}
-                  onChange={(e) => setStripePriceId(e.target.value)}
+            {/* Highlight Toggle */}
+            <div>
+              <label className="flex items-center gap-2.5 cursor-pointer select-none rounded-lg border border-zinc-200 p-2.5 hover:bg-zinc-50">
+                <input
+                  type="checkbox"
+                  checked={isPopular}
+                  onChange={(e) => setIsPopular(e.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
                 />
-              </div>
-
-              <div className="pt-4">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none rounded-lg border border-zinc-200 p-2.5 hover:bg-zinc-50">
-                  <input
-                    type="checkbox"
-                    checked={isPopular}
-                    onChange={(e) => setIsPopular(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-xs font-semibold text-zinc-800">
-                    Highlight with &ldquo;Popular / Upgrade&rdquo; badge on Pricing page
-                  </span>
-                </label>
-              </div>
+                <span className="text-xs font-semibold text-zinc-800">
+                  Highlight with &ldquo;Popular / Upgrade&rdquo; badge on Pricing page
+                </span>
+              </label>
             </div>
 
             {/* Interactive Plan Features Manager */}

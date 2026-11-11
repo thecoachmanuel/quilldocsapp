@@ -421,12 +421,12 @@ export default function UsersManagement() {
                             )}
                             {u.planName} (${u.planPrice}/mo)
                           </span>
-                          {u.isSubscribed && u.stripeCurrentPeriodEnd && (
+                          {u.isSubscribed && u.currentPeriodEnd && (
                             <p className="text-[11px] text-zinc-500 flex items-center gap-1">
                               <Calendar className="h-3 w-3 text-zinc-400" />
                               Renews{" "}
                               {format(
-                                new Date(u.stripeCurrentPeriodEnd),
+                                new Date(u.currentPeriodEnd),
                                 "MMM d, yyyy"
                               )}
                             </p>
@@ -778,12 +778,12 @@ export default function UsersManagement() {
                     {subModalUser.planName} ({subModalUser.planQuota} files max)
                   </span>
                 </div>
-                {subModalUser.stripeCurrentPeriodEnd && (
+                {subModalUser.currentPeriodEnd && (
                   <div className="flex items-center justify-between">
                     <span className="text-zinc-500">Current Period Ends:</span>
                     <span className="font-medium text-zinc-800">
                       {format(
-                        new Date(subModalUser.stripeCurrentPeriodEnd),
+                        new Date(subModalUser.currentPeriodEnd),
                         "PPP"
                       )}
                     </span>

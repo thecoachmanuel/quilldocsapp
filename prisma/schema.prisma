@@ -20,10 +20,11 @@ model User {
   File    File[]
   Message Message[]
 
-  stripeCustomerId       String?   @map("stripe_customer_id")
-  stripeSubscriptionId   String?   @map("stripe_subscription_id")
-  stripePriceId          String?   @map("stripe_price_id")
-  stripeCurrentPeriodEnd DateTime? @map("stripe_current_period_end")
+  // Column @map names preserved for backward compatibility with existing MongoDB documents
+  customerId       String?   @map("stripe_customer_id")
+  subscriptionId   String?   @map("stripe_subscription_id")
+  planPriceId      String?   @map("stripe_price_id")
+  currentPeriodEnd DateTime? @map("stripe_current_period_end")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -75,7 +76,6 @@ model PlanConfig {
   maxFileSizeMB Int      @default(4)
   features      String[]
   isPopular     Boolean  @default(false)
-  stripePriceId String?
   updatedAt     DateTime @updatedAt
 }
 

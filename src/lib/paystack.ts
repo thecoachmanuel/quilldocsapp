@@ -177,14 +177,14 @@ export async function grantUserProAccess(
     : `paystack_${reference}`;
 
   // Prevent double-crediting 30 days if both callback verification and webhook fire for the same reference
-  if (existingUser.stripeSubscriptionId === normalizedSubId) {
+  if (existingUser.subscriptionId === normalizedSubId) {
     return existingUser;
   }
 
   const currentEnd =
-    existingUser.stripeCurrentPeriodEnd &&
-    new Date(existingUser.stripeCurrentPeriodEnd).getTime() > Date.now()
-      ? new Date(existingUser.stripeCurrentPeriodEnd).getTime()
+    existingUser.currentPeriodEnd &&
+    new Date(existingUser.currentPeriodEnd).getTime() > Date.now()
+      ? new Date(existingUser.currentPeriodEnd).getTime()
       : Date.now();
 
   const newPeriodEnd = new Date(currentEnd + 30 * 24 * 60 * 60 * 1000);
@@ -192,13 +192,13 @@ export async function grantUserProAccess(
   const updatedUser = await db.user.update({
     where: { id: userId },
     data: {
-      stripePriceId: "pro",
-      stripeSubscriptionId: normalizedSubId,
-      stripeCustomerId:
+      planPriceId: "pro",
+      subscriptionId: normalizedSubId,
+      customerId:
         customerCode ||
-        existingUser.stripeCustomerId ||
+        existingUser.customerId ||
         `cus_ps_${userId.slice(0, 8)}`,
-      stripeCurrentPeriodEnd: newPeriodEnd,
+      currentPeriodEnd: newPeriodEnd,
     },
   });
 

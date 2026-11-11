@@ -1,6 +1,6 @@
 "use client";
 
-import { getUserSubscriptionPlan } from "@/lib/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { trpc } from "@/app/_trpc/client";
 import MaxWidthWrapper from "./MaxWidthWrapper";
 import {
@@ -8,7 +8,6 @@ import {
   Calendar,
   Check,
   CreditCard,
-  ExternalLink,
   Gem,
   Loader2,
   ShieldCheck,
@@ -36,7 +35,7 @@ import { useEffect, useRef, useState } from "react";
 
 interface BillingFormProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
-  billingGateway?: "paystack" | "stripe" | "none";
+  billingGateway?: "paystack" | "none";
 }
 
 const BillingForm = ({
@@ -135,8 +134,8 @@ const BillingForm = ({
       },
     });
 
-  const { mutate: createStripeSession, isLoading } =
-    trpc.createStripeSession.useMutation({
+  const { mutate: createPaystackSession, isLoading } =
+    trpc.createPaystackSession.useMutation({
       onSuccess: ({ url }) => {
         if (url) window.location.href = url;
         if (!url) {
@@ -189,16 +188,12 @@ const BillingForm = ({
     "Priority support & fastest processing queue",
   ];
 
-  const paymentMethodLabel = subscriptionPlan.stripeSubscriptionId?.startsWith(
+  const paymentMethodLabel = subscriptionPlan.subscriptionId?.startsWith(
     "paystack_"
   )
     ? "Paystack"
-    : subscriptionPlan.stripeSubscriptionId?.startsWith("sub_admin_")
+    : subscriptionPlan.subscriptionId?.startsWith("sub_admin_")
     ? "Admin Assigned"
-    : subscriptionPlan.stripeSubscriptionId?.startsWith("sub_")
-    ? "Stripe"
-    : billingGateway === "stripe"
-    ? "Stripe"
     : "Paystack";
 
   return (
@@ -211,7 +206,7 @@ const BillingForm = ({
             setConfirmDowngrade(false);
             setIsManageOpen(true);
           } else {
-            createStripeSession();
+            createPaystackSession();
           }
         }}
       >
@@ -322,9 +317,9 @@ const BillingForm = ({
                 {subscriptionPlan.isCanceled
                   ? "Your plan will be canceled on "
                   : "Your plan renews on "}
-                {subscriptionPlan.stripeCurrentPeriodEnd
+                {subscriptionPlan.currentPeriodEnd
                   ? format(
-                    subscriptionPlan.stripeCurrentPeriodEnd,
+                    subscriptionPlan.currentPeriodEnd,
                     "dd.MM.yyyy"
                   )
                   : "N/A"}
@@ -387,8 +382,8 @@ const BillingForm = ({
                   </span>
                   <span className="inline-flex items-center gap-1.5 font-medium text-zinc-900">
                     <Calendar className="h-3.5 w-3.5 text-zinc-400" />
-                    {subscriptionPlan.stripeCurrentPeriodEnd
-                      ? format(subscriptionPlan.stripeCurrentPeriodEnd, "PPP")
+                    {subscriptionPlan.currentPeriodEnd
+                      ? format(subscriptionPlan.currentPeriodEnd, "PPP")
                       : "Active"}
                   </span>
                 </div>
@@ -400,11 +395,11 @@ const BillingForm = ({
                   </span>
                 </div>
 
-                {subscriptionPlan.stripeSubscriptionId && (
+                {subscriptionPlan.subscriptionId && (
                   <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-200/70">
                     <span className="text-xs text-zinc-500">Reference</span>
                     <code className="text-[11px] font-mono text-zinc-600 truncate max-w-[220px]">
-                      {subscriptionPlan.stripeSubscriptionId}
+                      {subscriptionPlan.subscriptionId}
                     </code>
                   </div>
                 )}
@@ -415,7 +410,7 @@ const BillingForm = ({
                   <Button
                     type="button"
                     disabled={isLoading || isCanceling}
-                    onClick={() => createStripeSession({ renew: true })}
+                    onClick={() => createPaystackSession({ renew: true })}
                     className="w-full gap-2"
                   >
                     {isLoading ? (
@@ -424,22 +419,6 @@ const BillingForm = ({
                       <CreditCard className="h-4 w-4" />
                     )}
                     Extend / Renew +30 Days (₦{displayPriceNgn.toLocaleString()})
-                  </Button>
-                )}
-
-                {billingGateway === "stripe" && subscriptionPlan.stripeCustomerId && (
-                  <Button
-                    type="button"
-                    disabled={isLoading || isCanceling}
-                    onClick={() => createStripeSession()}
-                    className="w-full gap-2"
-                  >
-                    {isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ExternalLink className="h-4 w-4" />
-                    )}
-                    Open Stripe Billing Portal
                   </Button>
                 )}
               </div>

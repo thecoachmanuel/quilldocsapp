@@ -1,17 +1,13 @@
 import BillingForm from "@/app/components/BillingForm";
 import { isPaystackConfigured } from "@/lib/paystack";
-import { getUserSubscriptionPlan, isStripeConfigured } from "@/lib/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 async function Page() {
   const subscriptionPlan = await getUserSubscriptionPlan();
-  const billingGateway = isPaystackConfigured()
-    ? "paystack"
-    : isStripeConfigured()
-    ? "stripe"
-    : "none";
+  const billingGateway = isPaystackConfigured() ? "paystack" : "none";
 
   return (
     <BillingForm

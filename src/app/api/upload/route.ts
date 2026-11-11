@@ -1,7 +1,7 @@
 import { getKindeServerSession } from "@/lib/kinde";
 import { db } from "@/db";
 import { ensureDbUser } from "@/lib/auth-rbac";
-import { getUserSubscriptionPlan } from "@/lib/stripe";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { saveDocumentBuffer } from "@/lib/document-storage";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { NextRequest, NextResponse } from "next/server";
@@ -50,11 +50,10 @@ export async function POST(req: NextRequest) {
     if (currentFilesCount >= planQuota) {
       return NextResponse.json(
         {
-          error: `You have reached the maximum quota of ${planQuota} documents on the ${planName} plan. ${
-            !isSubscribed
+          error: `You have reached the maximum quota of ${planQuota} documents on the ${planName} plan. ${!isSubscribed
               ? "Upgrade to Pro to upload more documents."
               : "Please delete some files to upload more."
-          }`,
+            }`,
           quotaExceeded: true,
           currentCount: currentFilesCount,
           maxQuota: planQuota,
@@ -89,9 +88,8 @@ export async function POST(req: NextRequest) {
     if (file.size > maxFileSize) {
       return NextResponse.json(
         {
-          error: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the ${planMaxMB}MB limit for the ${planName} plan. ${
-            !isSubscribed ? "Upgrade to Pro for larger file uploads." : ""
-          }`,
+          error: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the ${planMaxMB}MB limit for the ${planName} plan. ${!isSubscribed ? "Upgrade to Pro for larger file uploads." : ""
+            }`,
           fileSizeExceeded: true,
         },
         { status: 400 }
@@ -133,9 +131,8 @@ export async function POST(req: NextRequest) {
     if (pageCount > maxPages) {
       return NextResponse.json(
         {
-          error: `This document contains ${pageCount} pages, which exceeds the ${maxPages}-page limit for the ${planName} plan. ${
-            !isSubscribed ? "Upgrade to Pro for higher page limits." : ""
-          }`,
+          error: `This document contains ${pageCount} pages, which exceeds the ${maxPages}-page limit for the ${planName} plan. ${!isSubscribed ? "Upgrade to Pro for higher page limits." : ""
+            }`,
           pagesExceeded: true,
           pageCount,
           maxPages,

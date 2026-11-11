@@ -15,11 +15,8 @@ import { headers } from "next/headers";
 import {
   getUserSubscriptionPlan,
   getDynamicPlans,
-  isStripeConfigured,
-  isUserRecordSubscribed,
   resolveUserPlanFromPlans,
-  stripe,
-} from "@/lib/stripe";
+} from "@/lib/subscription";
 import {
   isPaystackConfigured,
   initializePaystackTransaction,
@@ -97,7 +94,7 @@ export const appRouter = router({
     });
   }),
 
-  createStripeSession: privateProcedure
+  createPaystackSession: privateProcedure
     .input(z.object({ renew: z.boolean().optional() }).optional())
     .mutation(async ({ ctx, input }) => {
     const { userId } = ctx;
@@ -121,7 +118,7 @@ export const appRouter = router({
       dynamicPlans.find((p) => p.price.amount > 0) ||
       dynamicPlans[0];
 
-    // 1. Paystack Gateway (Primary — strictly used whenever Paystack is configured)
+    // 1. Paystack Gateway
     if (isPaystackConfigured()) {
       if (subscriptionPlan.isSubscribed && !input?.renew) {
         return { url: `${billingUrl}?status=active` };
@@ -143,7 +140,7 @@ export const appRouter = router({
         return { url: paystackSession.authorization_url };
       } catch (paystackErr: any) {
         console.error(
-          "[createStripeSession] Paystack initialization failed:",
+          "[createPaystackSession] Paystack initialization failed:",
           paystackErr?.message || paystackErr
         );
         throw new TRPCError({
@@ -155,81 +152,26 @@ export const appRouter = router({
       }
     }
 
-    // 2. Stripe Gateway (ONLY used as fallback when Paystack is NOT configured)
-    if (isStripeConfigured()) {
-      try {
-        if (subscriptionPlan.isSubscribed && dbUser.stripeCustomerId) {
-          const stripeSession = await stripe.billingPortal.sessions.create({
-            customer: dbUser.stripeCustomerId,
-            return_url: billingUrl,
-          });
-
-          return { url: stripeSession.url };
-        }
-
-        const proPriceId =
-          proPlan?.price.priceIds.test || proPlan?.price.priceIds.production;
-
-        if (!proPriceId) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: "Stripe price ID is not configured for the Pro plan.",
-          });
-        }
-
-        const stripeSession = await stripe.checkout.sessions.create({
-          success_url: billingUrl,
-          cancel_url: billingUrl,
-          payment_method_types: ["card"],
-          mode: "subscription",
-          billing_address_collection: "auto",
-          customer_email: dbUser.email,
-          line_items: [
-            {
-              price: proPriceId,
-              quantity: 1,
-            },
-          ],
-          metadata: {
-            userId: userId,
-          },
-        });
-
-        return { url: stripeSession.url };
-      } catch (stripeErr: any) {
-        if (stripeErr instanceof TRPCError) throw stripeErr;
-        console.error(
-          "[createStripeSession] Stripe session creation failed:",
-          stripeErr?.message || stripeErr
-        );
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message:
-            stripeErr?.message || "Failed to initialize Stripe checkout.",
-        });
-      }
-    }
-
-    // 3. Local Dev Simulation ONLY when neither Paystack nor Stripe is configured
+    // 2. Local Dev Simulation ONLY when Paystack is NOT configured locally
     const isProductionEnv =
       process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
     if (isProductionEnv) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
         message:
-          "No payment gateway is configured. Please configure PAYSTACK_SECRET_KEY (or STRIPE_SECRET_KEY fallback).",
+          "Paystack payment gateway is not configured. Please configure PAYSTACK_SECRET_KEY.",
       });
     }
 
     const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    if (subscriptionPlan.isSubscribed) {
+    if (subscriptionPlan.isSubscribed && !input?.renew) {
       await db.user.update({
         where: { id: userId },
         data: {
-          stripePriceId: null,
-          stripeSubscriptionId: null,
-          stripeCurrentPeriodEnd: null,
+          planPriceId: null,
+          subscriptionId: null,
+          currentPeriodEnd: null,
         },
       });
       return { url: `${billingUrl}?canceled=true` };
@@ -237,11 +179,11 @@ export const appRouter = router({
       await db.user.update({
         where: { id: userId },
         data: {
-          stripeCustomerId:
-            dbUser.stripeCustomerId || `cus_test_${userId.slice(0, 8)}`,
-          stripeSubscriptionId: `sub_test_${Date.now()}`,
-          stripePriceId: proPlan?.price.priceIds.test || proPlan?.slug || "pro",
-          stripeCurrentPeriodEnd: thirtyDaysFromNow,
+          customerId:
+            dbUser.customerId || `cus_test_${userId.slice(0, 8)}`,
+          subscriptionId: `sub_test_${Date.now()}`,
+          planPriceId: proPlan?.slug || "pro",
+          currentPeriodEnd: thirtyDaysFromNow,
         },
       });
       return { url: `${billingUrl}?upgraded=true` };
@@ -318,29 +260,12 @@ export const appRouter = router({
 
     if (!dbUser) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-    if (
-      isStripeConfigured() &&
-      dbUser.stripeSubscriptionId &&
-      dbUser.stripeSubscriptionId.startsWith("sub_") &&
-      !dbUser.stripeSubscriptionId.startsWith("sub_admin_") &&
-      !dbUser.stripeSubscriptionId.startsWith("sub_test_")
-    ) {
-      try {
-        await stripe.subscriptions.cancel(dbUser.stripeSubscriptionId);
-      } catch (stripeCancelErr: any) {
-        console.warn(
-          "[cancelSubscription] Stripe cancel warning:",
-          stripeCancelErr?.message
-        );
-      }
-    }
-
     await db.user.update({
       where: { id: userId },
       data: {
-        stripePriceId: null,
-        stripeSubscriptionId: null,
-        stripeCurrentPeriodEnd: null,
+        planPriceId: null,
+        subscriptionId: null,
+        currentPeriodEnd: null,
       },
     });
 
@@ -497,35 +422,16 @@ export const appRouter = router({
       getDynamicPlans(),
     ]);
 
-    const now = Date.now();
-    const freePlan =
-      dynamicPlans.find((p) => p.slug === "free") || dynamicPlans[0];
-    const proPlan =
-      dynamicPlans.find((p) => p.slug === "pro") ||
-      dynamicPlans[1] ||
-      freePlan;
-
     let subscribedCount = 0;
     let adminCount = 0;
     let suspendedCount = 0;
     let estimatedMrr = 0;
 
     const enrichedUsers = allUsers.map((u: any) => {
-      const periodEnd = u.stripeCurrentPeriodEnd
-        ? new Date(u.stripeCurrentPeriodEnd)
-        : null;
-      const isSubscribed = Boolean(
-        u.stripePriceId && periodEnd && periodEnd.getTime() + 86_400_000 > now
+      const { plan: matchedPlan, isSubscribed } = resolveUserPlanFromPlans(
+        u,
+        dynamicPlans
       );
-      const matchedPlan = isSubscribed
-        ? dynamicPlans.find(
-            (p) =>
-              p.slug === u.stripePriceId ||
-              p.price.priceIds.test === u.stripePriceId ||
-              p.price.priceIds.production === u.stripePriceId ||
-              (u.stripePriceId === "pro" && p.slug === "pro")
-          ) || proPlan
-        : freePlan;
 
       if (isSubscribed) {
         subscribedCount++;
@@ -621,12 +527,6 @@ export const appRouter = router({
         )
           ? "MongoDB Cloud"
           : "Local JSON Store",
-        stripeMode: Boolean(
-          process.env.STRIPE_SECRET_KEY &&
-            process.env.STRIPE_SECRET_KEY.startsWith("sk_")
-        )
-          ? "Live Stripe API"
-          : "Instant Test Activation",
         paystackMode: isPaystackConfigured()
           ? "Live Paystack Gateway (NGN & International Cards)"
           : "Development Test Mode",
@@ -664,10 +564,10 @@ export const appRouter = router({
         planSlug: matchedPlan?.slug || "free",
         planQuota: matchedPlan?.quota || 10,
         planPrice: matchedPlan?.price.amount || 0,
-        stripeCustomerId: u.stripeCustomerId || null,
-        stripeSubscriptionId: u.stripeSubscriptionId || null,
-        stripePriceId: u.stripePriceId || null,
-        stripeCurrentPeriodEnd: u.stripeCurrentPeriodEnd || null,
+        customerId: u.customerId || null,
+        subscriptionId: u.subscriptionId || null,
+        planPriceId: u.planPriceId || null,
+        currentPeriodEnd: u.currentPeriodEnd || null,
         filesCount: userFiles.length,
         messagesCount: userMessages.length,
         createdAt: u.createdAt || new Date().toISOString(),
@@ -714,10 +614,10 @@ export const appRouter = router({
           name: input.name.trim(),
           role: input.role,
           status: input.status,
-          stripeCustomerId: isPaidPlan ? `cus_admin_${Date.now()}` : null,
-          stripeSubscriptionId: isPaidPlan ? `sub_admin_${Date.now()}` : null,
-          stripePriceId: isPaidPlan ? targetPlan.slug : null,
-          stripeCurrentPeriodEnd: periodEnd,
+          customerId: isPaidPlan ? `cus_admin_${Date.now()}` : null,
+          subscriptionId: isPaidPlan ? `sub_admin_${Date.now()}` : null,
+          planPriceId: isPaidPlan ? targetPlan.slug : null,
+          currentPeriodEnd: periodEnd,
         },
       });
 
@@ -783,9 +683,9 @@ export const appRouter = router({
         return await db.user.update({
           where: { id: input.userId },
           data: {
-            stripePriceId: null,
-            stripeSubscriptionId: null,
-            stripeCurrentPeriodEnd: null,
+            planPriceId: null,
+            subscriptionId: null,
+            currentPeriodEnd: null,
           },
         });
       }
@@ -800,18 +700,18 @@ export const appRouter = router({
         return await db.user.update({
           where: { id: input.userId },
           data: {
-            stripePriceId: null,
-            stripeSubscriptionId: null,
-            stripeCurrentPeriodEnd: null,
+            planPriceId: null,
+            subscriptionId: null,
+            currentPeriodEnd: null,
           },
         });
       }
 
       const currentEnd =
         input.action === "EXTEND" &&
-        user.stripeCurrentPeriodEnd &&
-        new Date(user.stripeCurrentPeriodEnd).getTime() > Date.now()
-          ? new Date(user.stripeCurrentPeriodEnd).getTime()
+        user.currentPeriodEnd &&
+        new Date(user.currentPeriodEnd).getTime() > Date.now()
+          ? new Date(user.currentPeriodEnd).getTime()
           : Date.now();
 
       const newPeriodEnd = new Date(
@@ -819,21 +719,21 @@ export const appRouter = router({
       );
 
       const hasRealSubscription =
-        user.stripeSubscriptionId &&
-        !user.stripeSubscriptionId.startsWith("sub_test_");
+        user.subscriptionId &&
+        !user.subscriptionId.startsWith("sub_test_");
 
       return await db.user.update({
         where: { id: input.userId },
         data: {
-          stripeCustomerId:
-            user.stripeCustomerId ||
+          customerId:
+            user.customerId ||
             `cus_admin_${input.userId.slice(0, 8)}`,
-          stripeSubscriptionId:
+          subscriptionId:
             input.action === "EXTEND" && hasRealSubscription
-              ? user.stripeSubscriptionId
+              ? user.subscriptionId
               : `sub_admin_${Date.now()}`,
-          stripePriceId: targetPlan.slug,
-          stripeCurrentPeriodEnd: newPeriodEnd,
+          planPriceId: targetPlan.slug,
+          currentPeriodEnd: newPeriodEnd,
         },
       });
     }),
@@ -909,7 +809,6 @@ export const appRouter = router({
         maxFileSizeMB: z.number().min(1),
         features: z.array(z.string()),
         isPopular: z.boolean().default(false),
-        stripePriceId: z.string().optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -951,7 +850,6 @@ export const appRouter = router({
         maxFileSizeMB: z.number().min(1),
         features: z.array(z.string()),
         isPopular: z.boolean().optional(),
-        stripePriceId: z.string().optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -967,7 +865,6 @@ export const appRouter = router({
           maxFileSizeMB: input.maxFileSizeMB,
           features: input.features,
           isPopular: Boolean(input.isPopular),
-          stripePriceId: input.stripePriceId ?? "",
         },
         create: {
           id: input.id || `plan_${input.slug}`,
@@ -981,7 +878,6 @@ export const appRouter = router({
           maxFileSizeMB: input.maxFileSizeMB,
           features: input.features,
           isPopular: Boolean(input.isPopular),
-          stripePriceId: input.stripePriceId ?? "",
         },
       });
     }),

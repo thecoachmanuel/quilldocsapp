@@ -81,10 +81,10 @@ export async function ensureDbUser(kindeUser: {
           name: existingByEmail.name || fullName,
           role: existingByEmail.role || "USER",
           status: existingByEmail.status || "ACTIVE",
-          stripeCustomerId: existingByEmail.stripeCustomerId || null,
-          stripeSubscriptionId: existingByEmail.stripeSubscriptionId || null,
-          stripePriceId: existingByEmail.stripePriceId || null,
-          stripeCurrentPeriodEnd: existingByEmail.stripeCurrentPeriodEnd || null,
+          customerId: existingByEmail.customerId || null,
+          subscriptionId: existingByEmail.subscriptionId || null,
+          planPriceId: existingByEmail.planPriceId || null,
+          currentPeriodEnd: existingByEmail.currentPeriodEnd || null,
         },
       });
     }

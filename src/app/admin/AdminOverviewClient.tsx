@@ -285,9 +285,9 @@ export default function AdminOverviewClient() {
 
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-50 border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700">
               <CreditCard className="h-3.5 w-3.5 text-emerald-600" />
-              Billing:{" "}
+              Paystack Billing:{" "}
               <strong className="text-zinc-900">
-                {systemHealth.stripeMode}
+                {systemHealth.paystackMode}
               </strong>
             </span>
           </div>

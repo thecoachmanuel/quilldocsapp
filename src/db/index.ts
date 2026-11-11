@@ -11,8 +11,8 @@ declare global {
 
 const isDatabaseConfigured = Boolean(
   process.env.DATABASE_URL &&
-    process.env.DATABASE_URL.trim() !== "" &&
-    !process.env.DATABASE_URL.includes("<user>")
+  process.env.DATABASE_URL.trim() !== "" &&
+  !process.env.DATABASE_URL.includes("<user>")
 );
 
 export const DEFAULT_PLAN_CONFIGS = [
@@ -33,7 +33,6 @@ export const DEFAULT_PLAN_CONFIGS = [
       "Standard-quality AI responses",
     ],
     isPopular: false,
-    stripePriceId: "",
     updatedAt: new Date().toISOString(),
   },
   {
@@ -55,7 +54,6 @@ export const DEFAULT_PLAN_CONFIGS = [
       "Priority customer support",
     ],
     isPopular: true,
-    stripePriceId: "price_1OQrcuKMJjiqL9lYEEU1nxSz",
     updatedAt: new Date().toISOString(),
   },
 ];
@@ -102,6 +100,14 @@ function createLocalDb() {
       if (!Array.isArray(parsed.users)) {
         parsed.users = [];
         needsWrite = true;
+      } else {
+        parsed.users = parsed.users.map((u: any) => ({
+          ...u,
+          customerId: u.customerId ?? u.stripeCustomerId ?? null,
+          subscriptionId: u.subscriptionId ?? u.stripeSubscriptionId ?? null,
+          planPriceId: u.planPriceId ?? u.stripePriceId ?? null,
+          currentPeriodEnd: u.currentPeriodEnd ?? u.stripeCurrentPeriodEnd ?? null,
+        }));
       }
       if (!Array.isArray(parsed.files)) {
         parsed.files = [];
@@ -161,8 +167,8 @@ function createLocalDb() {
               return false;
             if (where.role && (u.role || "USER") !== where.role) return false;
             if (
-              where.stripeCustomerId &&
-              u.stripeCustomerId !== where.stripeCustomerId
+              where.customerId &&
+              u.customerId !== where.customerId
             )
               return false;
             return true;
@@ -177,8 +183,8 @@ function createLocalDb() {
             if (where.email && u.email?.toLowerCase() !== where.email?.toLowerCase())
               return false;
             if (
-              where.stripeCustomerId &&
-              u.stripeCustomerId !== where.stripeCustomerId
+              where.customerId &&
+              u.customerId !== where.customerId
             )
               return false;
             return true;
@@ -231,10 +237,10 @@ function createLocalDb() {
           name: data.name || null,
           role: data.role || "USER",
           status: data.status || "ACTIVE",
-          stripeCustomerId: data.stripeCustomerId || null,
-          stripeSubscriptionId: data.stripeSubscriptionId || null,
-          stripePriceId: data.stripePriceId || null,
-          stripeCurrentPeriodEnd: data.stripeCurrentPeriodEnd || null,
+          customerId: data.customerId || null,
+          subscriptionId: data.subscriptionId || null,
+          planPriceId: data.planPriceId || null,
+          currentPeriodEnd: data.currentPeriodEnd || null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -249,13 +255,13 @@ function createLocalDb() {
           if (where.email && u.email?.toLowerCase() === where.email?.toLowerCase())
             return true;
           if (
-            where.stripeCustomerId &&
-            u.stripeCustomerId === where.stripeCustomerId
+            where.customerId &&
+            u.customerId === where.customerId
           )
             return true;
           if (
-            where.stripeSubscriptionId &&
-            u.stripeSubscriptionId === where.stripeSubscriptionId
+            where.subscriptionId &&
+            u.subscriptionId === where.subscriptionId
           )
             return true;
           return false;
@@ -505,7 +511,6 @@ function createLocalDb() {
           maxFileSizeMB: Number(data.maxFileSizeMB) || 4,
           features: Array.isArray(data.features) ? data.features : [],
           isPopular: Boolean(data.isPopular),
-          stripePriceId: data.stripePriceId || "",
           updatedAt: new Date().toISOString(),
         };
         store.planConfigs.push(newPlan);

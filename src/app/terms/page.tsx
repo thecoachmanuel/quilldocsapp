@@ -61,7 +61,7 @@ export default function TermsOfServicePage() {
                 <h2>3. Subscription Plans, Billing & Refunds</h2>
               </div>
               <p>
-                QuillDocs offers both Free and Paid (Pro) plans. Paid subscriptions are billed in advance on a recurring monthly or annual basis via Stripe.
+                QuillDocs offers both Free and Paid (Pro) plans. Paid subscriptions are billed in advance via Paystack.
               </p>
               <ul className="list-disc pl-5 space-y-2 text-zinc-600">
                 <li>

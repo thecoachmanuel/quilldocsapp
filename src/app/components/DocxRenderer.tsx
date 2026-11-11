@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import SimpleBar from "simplebar-react";
 import {
   Loader2,
@@ -33,10 +33,162 @@ interface DocxRendererProps {
 }
 
 /**
+ * Waits for all embedded <img> elements rendered by docx-preview to decode so page
+ * pagination and height measurements include real image dimensions.
+ */
+async function waitForDocxImages(rootEl: HTMLElement): Promise<void> {
+  const images = Array.from(rootEl.querySelectorAll("img"));
+  if (images.length === 0) return;
+
+  await Promise.all(
+    images.map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          if (img.complete && img.naturalWidth > 0) {
+            resolve();
+            return;
+          }
+
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            img.removeEventListener("load", finish);
+            img.removeEventListener("error", onErr);
+            resolve();
+          };
+          const onErr = () => {
+            // Hide broken non-web vector binaries (e.g., EMF/WMF) cleanly rather than broken image icons
+            const src = img.getAttribute("src") || "";
+            if (/^data:image\/(x-emf|x-wmf|tiff)/i.test(src)) {
+              img.style.display = "none";
+            }
+            finish();
+          };
+
+          const timer = setTimeout(finish, 2500);
+          img.addEventListener("load", finish, { once: true });
+          img.addEventListener("error", onErr, { once: true });
+
+          if (typeof img.decode === "function") {
+            img.decode().then(finish).catch(() => {
+              // Fall back cleanly to load/error listeners or timeout
+            });
+          }
+        })
+    )
+  );
+}
+
+/**
+ * Splits an overflowing top-level Word table across page boundaries by <tr> rows,
+ * preserving colgroup sizing and header rows.
+ */
+function splitOverflowDocxTable(
+  table: HTMLTableElement,
+  remainingHeight: number
+): HTMLTableElement | null {
+  const containerParent =
+    (table.querySelector(":scope > tbody") as HTMLElement | null) || table;
+  const rows = Array.from(containerParent.children).filter(
+    (el) => el.tagName === "TR"
+  ) as HTMLTableRowElement[];
+
+  if (rows.length <= 2) return null;
+
+  const tableTop = table.getBoundingClientRect().top;
+  let splitRowIdx = -1;
+  for (let r = 1; r < rows.length; r++) {
+    const rowBottom = rows[r].getBoundingClientRect().bottom - tableTop;
+    if (rowBottom > remainingHeight) {
+      splitRowIdx = r;
+      break;
+    }
+  }
+
+  if (splitRowIdx <= 0 || splitRowIdx >= rows.length) return null;
+
+  const contTable = table.cloneNode(false) as HTMLTableElement;
+  const colgroup = table.querySelector(":scope > colgroup");
+  if (colgroup) {
+    contTable.appendChild(colgroup.cloneNode(true));
+  }
+
+  const targetContainer =
+    containerParent.tagName === "TBODY"
+      ? contTable.appendChild(document.createElement("tbody"))
+      : contTable;
+
+  // Repeat first row if it acts as a styled header or contains <th> cells
+  const firstRow = rows[0];
+  const isHeaderRow =
+    firstRow.classList.contains("first-row") ||
+    Boolean(firstRow.querySelector("th")) ||
+    Boolean(table.querySelector(":scope > thead"));
+
+  if (isHeaderRow) {
+    targetContainer.appendChild(firstRow.cloneNode(true));
+  }
+
+  rows.slice(splitRowIdx).forEach((row) => {
+    targetContainer.appendChild(row);
+  });
+
+  return contTable;
+}
+
+/**
+ * Ensures tables inside a Word page fit horizontally within the printable margin
+ * without right-edge clipping.
+ */
+function fitOversizedDocxTables(article: HTMLElement, maxTableWidth: number) {
+  if (maxTableWidth <= 100) return;
+
+  const tables = Array.from(article.querySelectorAll("table")).filter(
+    (t) => !t.parentElement?.closest("table")
+  ) as HTMLTableElement[];
+
+  tables.forEach((table) => {
+    if (table.parentElement?.classList.contains("docx-scaled-table-wrap")) {
+      return;
+    }
+    if (table.scrollWidth <= maxTableWidth + 2) return;
+
+    // Allow word wrapping in fixed/wide cells first before resorting to scaling
+    table.style.maxWidth = "100%";
+    const cells = Array.from(
+      table.querySelectorAll("td, th")
+    ) as HTMLElement[];
+    cells.forEach((cell) => {
+      cell.style.overflowWrap = "anywhere";
+    });
+
+    const measuredW = table.scrollWidth;
+    if (measuredW > maxTableWidth + 2) {
+      const tableScale = maxTableWidth / measuredW;
+      const naturalH = table.offsetHeight || table.getBoundingClientRect().height;
+      const wrap = document.createElement("div");
+      wrap.className = "docx-scaled-table-wrap";
+      wrap.style.width = `${Math.round(maxTableWidth)}px`;
+      wrap.style.height = `${Math.ceil(naturalH * tableScale)}px`;
+      wrap.style.overflow = "hidden";
+      wrap.style.position = "relative";
+
+      table.parentNode?.insertBefore(wrap, table);
+      wrap.appendChild(table);
+      table.style.maxWidth = "none";
+      table.style.transform = `scale(${tableScale})`;
+      table.style.transformOrigin = "top left";
+    }
+  });
+}
+
+/**
  * Post-processes docx-preview output so that pages align 100% with MS Word:
- * 1. Fixes docx-preview's Default Paragraph (Normal) span selector so Times New Roman 12pt (or the document's Normal font) applies to all default text runs instead of falling back to docDefaults (11pt Calibri).
- * 2. Preserves MS Word's exact <w:lastRenderedPageBreak/> page boundaries and cleans up docx-preview's split-paragraph artifacts (phantom empty list items at the bottom of a page and erroneous first-line indents on mid-sentence continuations at the top of the next page).
- * 3. Calibrates browser line-height metrics to match MS Word's exact page content box so every page maintains exact MS Word dimensions and margins without overflowing or clipping.
+ * 1. Fixes docx-preview's Default Paragraph (Normal) span selector so Normal font applies to all default text runs.
+ * 2. Waits for embedded images to decode, fits wide tables cleanly within margins, and splits overflowing multi-row tables across pages cleanly.
+ * 3. Locks every page to exact dimensions without crushing table readability or clipping images.
  */
 function formatAndPaginateDocx(rootEl: HTMLElement): number {
   // Step 0: Fix docx-preview stylesheet bug where default paragraph style (Normal) rPr
@@ -138,15 +290,16 @@ function formatAndPaginateDocx(rootEl: HTMLElement): number {
 
       while (
         currentArticle.scrollHeight > maxContentHeight + 28 &&
-        currentArticle.children.length > 1 &&
         safetyCounter < 60
       ) {
         safetyCounter++;
         const children = Array.from(currentArticle.children) as HTMLElement[];
+        if (children.length === 0) break;
+
         const articleRect = currentArticle.getBoundingClientRect();
         let splitIdx = -1;
 
-        for (let i = 1; i < children.length; i++) {
+        for (let i = 0; i < children.length; i++) {
           const childRect = children[i].getBoundingClientRect();
           const relBottom = childRect.bottom - articleRect.top;
           if (relBottom > maxContentHeight) {
@@ -157,6 +310,25 @@ function formatAndPaginateDocx(rootEl: HTMLElement): number {
 
         if (splitIdx === -1) break;
 
+        const candidate = children[splitIdx];
+        let overflowTable: HTMLTableElement | null = null;
+
+        if (candidate.tagName === "TABLE") {
+          const tableRelTop =
+            candidate.getBoundingClientRect().top - articleRect.top;
+          const remainingH = Math.max(120, maxContentHeight - tableRelTop);
+          overflowTable = splitOverflowDocxTable(
+            candidate as HTMLTableElement,
+            remainingH
+          );
+        }
+
+        // Prevent infinite loop when the very first non-splittable element already exceeds a page
+        if (splitIdx === 0 && !overflowTable) {
+          if (children.length <= 1) break;
+          splitIdx = 1;
+        }
+
         const nextSection = currentSection.cloneNode(false) as HTMLElement;
         const headerClone = currentSection
           .querySelector("header")
@@ -164,8 +336,15 @@ function formatAndPaginateDocx(rootEl: HTMLElement): number {
         if (headerClone) nextSection.appendChild(headerClone);
 
         const nextArticle = currentArticle.cloneNode(false) as HTMLElement;
-        for (let i = splitIdx; i < children.length; i++) {
-          nextArticle.appendChild(children[i]);
+        if (overflowTable) {
+          nextArticle.appendChild(overflowTable);
+          for (let i = splitIdx + 1; i < children.length; i++) {
+            nextArticle.appendChild(children[i]);
+          }
+        } else {
+          for (let i = splitIdx; i < children.length; i++) {
+            nextArticle.appendChild(children[i]);
+          }
         }
         nextSection.appendChild(nextArticle);
 
@@ -214,15 +393,24 @@ function formatAndPaginateDocx(rootEl: HTMLElement): number {
       targetH - padTop - padBottom - headerH - footerH
     );
 
+    const padLeft = parseFloat(computed.paddingLeft) || 96;
+    const padRight = parseFloat(computed.paddingRight) || 96;
+    const maxArticleW = Math.max(240, naturalW - padLeft - padRight);
+
     const article = pageEl.querySelector("article") as HTMLElement | null;
+    if (article) {
+      fitOversizedDocxTables(article, maxArticleW);
+    }
+
     if (article && article.scrollHeight > maxContentHeight) {
-      // Browser CSS line-height (e.g. 2.00) is ~4-6% taller than MS Word's native GDI line layout.
-      // Calibrate line-height & paragraph spacing proportionally so the exact MS Word lines fit within the page margins.
-      const ratio = maxContentHeight / article.scrollHeight;
+      // Browser CSS line-height is slightly taller than MS Word's GDI layout;
+      // gently calibrate within readable bounds so tables and dense text never crush.
+      const ratio = Math.max(0.88, maxContentHeight / article.scrollHeight);
       const blocks = Array.from(
-        article.querySelectorAll("p, td, th, li")
+        article.querySelectorAll("p, li")
       ) as HTMLElement[];
       blocks.forEach((el) => {
+        if (el.closest("table")) return;
         const cs = window.getComputedStyle(el);
         const lh = parseFloat(cs.lineHeight);
         const fs = parseFloat(cs.fontSize) || 16;
@@ -290,12 +478,9 @@ function syncActivePageAndScale(
   ) as HTMLElement[];
   if (frames.length === 0) return;
 
-  const BASE_WIDTH = 816;
   const sideAllowance = availableWidth < 640 ? 6 : 24;
   const maxWidthAllowed = Math.max(availableWidth - sideAllowance, 260);
   const maxFit = isExpanded ? 1.4 : 1.15;
-  const fitScale = Math.min(maxWidthAllowed / BASE_WIDTH, maxFit);
-  const effectiveScale = fitScale * userScale;
 
   const clampedPage = Math.min(Math.max(1, activePage), frames.length);
 
@@ -312,6 +497,8 @@ function syncActivePageAndScale(
     frame.style.display = "block";
     const naturalW = parseFloat(pageEl.dataset.naturalWidth || "816") || 816;
     const naturalH = parseFloat(pageEl.dataset.naturalHeight || "1056") || 1056;
+    const fitScale = Math.min(maxWidthAllowed / naturalW, maxFit);
+    const effectiveScale = fitScale * userScale;
 
     const scaledW = Math.round(naturalW * effectiveScale);
     const scaledH = Math.round(naturalH * effectiveScale);
@@ -423,6 +610,8 @@ export default function DocxRenderer({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement>(null);
+  const readerContentRef = useRef<HTMLDivElement>(null);
+  const fullscreenReaderContentRef = useRef<HTMLDivElement>(null);
   const blobRef = useRef<Blob | null>(null);
   const isRenderingRef = useRef<boolean>(false);
 
@@ -480,7 +669,10 @@ export default function DocxRenderer({
     }
 
     if (matches.length === 0 && htmlContent) {
-      if (htmlContent.toLowerCase().includes(q)) {
+      const readerText =
+        readerContentRef.current?.textContent ||
+        htmlContent.replace(/<[^>]+>/g, " ");
+      if (readerText.toLowerCase().includes(q)) {
         matches.push(1);
       }
     }
@@ -509,11 +701,13 @@ export default function DocxRenderer({
     setCurrPage(searchMatches[prevIdx]);
   };
 
-  // Dynamically highlight matching keywords in the rendered MS Word DOM
+  // Dynamically highlight matching keywords in both Page View and Reader View DOM
   useEffect(() => {
     applyDomKeywordHighlight(containerRef.current, searchQuery);
     applyDomKeywordHighlight(fullscreenContainerRef.current, searchQuery);
-  }, [searchQuery, currPage, isLoading, isFullscreenOpen, renderMode]);
+    applyDomKeywordHighlight(readerContentRef.current, searchQuery);
+    applyDomKeywordHighlight(fullscreenReaderContentRef.current, searchQuery);
+  }, [searchQuery, currPage, isLoading, isFullscreenOpen, renderMode, htmlContent]);
 
   const { width: containerWidth, ref: resizeDetectorRef } = useResizeDetector();
   const { width: fullscreenContainerWidth, ref: fullscreenResizeRef } =
@@ -581,8 +775,8 @@ export default function DocxRenderer({
             .join("");
           setHtmlContent(
             data.parsed.html ||
-              fallbackParagraphs ||
-              "<p>Document content loaded.</p>"
+            fallbackParagraphs ||
+            "<p>Document content loaded.</p>"
           );
           setWordCount(data.parsed.totalWords || 0);
         }
@@ -648,6 +842,7 @@ export default function DocxRenderer({
           renderFootnotes: true,
         });
 
+        await waitForDocxImages(containerRef.current);
         const count = formatAndPaginateDocx(containerRef.current);
         const validCount = Math.max(1, count);
         setTotalPages(validCount);
@@ -717,6 +912,7 @@ export default function DocxRenderer({
               renderFooters: true,
               renderFootnotes: true,
             });
+            await waitForDocxImages(fullscreenContainerRef.current);
             formatAndPaginateDocx(fullscreenContainerRef.current);
             syncActivePageAndScale(
               fullscreenContainerRef.current,
@@ -749,18 +945,38 @@ export default function DocxRenderer({
     }
   }, [currPage, effectiveFullscreenWidth, scale, isFullscreenOpen, renderMode]);
 
-  // Mobile & Desktop Reflowable Reader View
-  const renderReaderView = () => {
-    const displayHtml = searchQuery.trim()
-      ? htmlContent.replace(
-          new RegExp(
-            `(${searchQuery.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")})`,
-            "gi"
-          ),
-          "<mark class='bg-amber-300 text-zinc-900 rounded-xs px-0.5 font-medium'>$1</mark>"
-        )
-      : htmlContent;
+  // Wrap tables cleanly & sanitize unrenderable image binaries for Reader View
+  const preparedReaderHtml = useMemo(() => {
+    if (!htmlContent) return "";
+    if (typeof window === "undefined") return htmlContent;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlContent, "text/html");
 
+      Array.from(doc.body.querySelectorAll("img")).forEach((img) => {
+        const src = img.getAttribute("src") || "";
+        if (/^data:image\/(x-emf|x-wmf|tiff)/i.test(src)) {
+          img.remove();
+        }
+      });
+
+      Array.from(doc.body.querySelectorAll("table")).forEach((table) => {
+        if (table.parentElement?.closest("table")) return;
+        if (table.parentElement?.classList.contains("docx-table-wrap")) return;
+        const wrap = doc.createElement("div");
+        wrap.className = "docx-table-wrap";
+        table.parentNode?.insertBefore(wrap, table);
+        wrap.appendChild(table);
+      });
+
+      return doc.body.innerHTML;
+    } catch {
+      return htmlContent;
+    }
+  }, [htmlContent]);
+
+  // Mobile & Desktop Reflowable Reader View
+  const renderReaderView = (isFullscreen = false) => {
     return (
       <div className="w-full max-w-4xl mx-auto my-2 sm:my-5 bg-white border border-zinc-200 shadow-sm rounded-lg p-4 sm:p-10 md:p-14 select-text">
         {isHtmlLoading && !htmlContent ? (
@@ -770,10 +986,12 @@ export default function DocxRenderer({
           </div>
         ) : (
           <div
+            ref={isFullscreen ? fullscreenReaderContentRef : readerContentRef}
             style={{ fontSize: `${Math.round(scale * 100)}%` }}
-            className="prose prose-zinc max-w-none prose-headings:font-bold prose-headings:text-zinc-900 prose-p:text-zinc-800 prose-p:leading-relaxed prose-li:text-zinc-800 prose-table:border prose-th:bg-zinc-50 prose-td:p-2 overflow-x-auto break-words"
+            className="docx-reader-content prose prose-zinc max-w-none prose-headings:font-bold prose-headings:text-zinc-900 prose-p:text-zinc-800 prose-p:leading-relaxed prose-li:text-zinc-800 overflow-x-auto break-words"
             dangerouslySetInnerHTML={{
-              __html: displayHtml || "<p>No text content found in document.</p>",
+              __html:
+                preparedReaderHtml || "<p>No text content found in document.</p>",
             }}
           />
         )}
@@ -1117,7 +1335,7 @@ export default function DocxRenderer({
                       renderMode === "page" ? "block w-full" : "hidden"
                     }
                   />
-                  {renderMode === "clean" && renderReaderView()}
+                  {renderMode === "clean" && renderReaderView(true)}
                 </div>
               </SimpleBar>
             </DialogContent>

@@ -153,6 +153,84 @@
   text-size-adjust: 100% !important;
 }
 
+/* Preserve Word drawing/image/SVG dimensions against Tailwind Preflight resets */
+.docx img,
+.docx svg {
+  display: inline-block;
+  max-width: none !important;
+}
+
+.docx img:not([style*="width"]) {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.docx table {
+  border-collapse: collapse;
+  box-sizing: border-box;
+}
+
+.docx table td,
+.docx table th {
+  box-sizing: border-box;
+  overflow-wrap: break-word;
+}
+
+/* Word Reader View Table & Image Formatting */
+.docx-reader-content .docx-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  border-radius: 0.5rem;
+  border: 1px solid #d4d4d8;
+  background-color: #ffffff;
+}
+
+.docx-reader-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 !important;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background-color: #ffffff;
+}
+
+.docx-reader-content th,
+.docx-reader-content td {
+  border: 1px solid #d4d4d8;
+  padding: 0.55rem 0.75rem;
+  vertical-align: top;
+  text-align: left;
+  min-width: 72px;
+  overflow-wrap: break-word;
+}
+
+.docx-reader-content thead th {
+  background-color: #f4f4f5;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.docx-reader-content tr:nth-child(even) td {
+  background-color: #fafafa;
+}
+
+.docx-reader-content td img,
+.docx-reader-content th img {
+  margin: 0.25rem auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.docx-reader-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+  margin: 1rem auto;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+}
+
 /* In-Document Search Keyword Highlighting */
 mark.pdf-search-highlight,
 mark.docx-search-highlight,

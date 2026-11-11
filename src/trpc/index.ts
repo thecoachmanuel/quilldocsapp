@@ -7,10 +7,12 @@ import {
   adminProcedure,
 } from "./trpc";
 import { TRPCError } from "@trpc/server";
-import { db } from "@/db";
+import { revalidatePath } from "next/cache";
+import { db, DEFAULT_PLAN_CONFIGS } from "@/db";
 import z from "zod";
 import { INFINITE_QUERY_LIMIT } from "@/config/infinite-query";
 import { absoluteUrl } from "@/lib/utils";
+import { syncPlanFeatureBullets } from "@/lib/plan-utils";
 import { headers } from "next/headers";
 import {
   getUserSubscriptionPlan,
@@ -29,6 +31,19 @@ import { isAiConfigured } from "@/lib/ai";
 import { deleteDocumentBuffer } from "@/lib/document-storage";
 import fs from "fs";
 import path from "path";
+
+function revalidatePlanPaths() {
+  try {
+    revalidatePath("/pricing");
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/billing");
+    revalidatePath("/dashboard/multi");
+    revalidatePath("/admin");
+    revalidatePath("/admin/plans");
+  } catch {
+    // Safe fallback if invoked outside Next request scope
+  }
+}
 
 function resolveAppUrl(appPath: string): string {
   try {
@@ -95,7 +110,14 @@ export const appRouter = router({
   }),
 
   createPaystackSession: privateProcedure
-    .input(z.object({ renew: z.boolean().optional() }).optional())
+    .input(
+      z
+        .object({
+          renew: z.boolean().optional(),
+          planSlug: z.string().optional(),
+        })
+        .optional()
+    )
     .mutation(async ({ ctx, input }) => {
     const { userId } = ctx;
 
@@ -113,20 +135,31 @@ export const appRouter = router({
 
     const subscriptionPlan = await getUserSubscriptionPlan();
     const dynamicPlans = await getDynamicPlans();
-    const proPlan =
+    const requestedSlug =
+      input?.planSlug ||
+      (input?.renew && subscriptionPlan.isSubscribed
+        ? subscriptionPlan.slug
+        : undefined);
+    const targetPaidPlan =
+      (requestedSlug
+        ? dynamicPlans.find(
+            (p) => p.slug === requestedSlug && p.slug !== "free"
+          )
+        : undefined) ||
       dynamicPlans.find((p) => p.slug === "pro") ||
-      dynamicPlans.find((p) => p.price.amount > 0) ||
+      dynamicPlans.find((p) => p.slug !== "free" && p.price.amount > 0) ||
+      dynamicPlans.find((p) => p.slug !== "free") ||
       dynamicPlans[0];
 
     // 1. Paystack Gateway
     if (isPaystackConfigured()) {
-      if (subscriptionPlan.isSubscribed && !input?.renew) {
+      if (subscriptionPlan.isSubscribed && !input?.renew && !input?.planSlug) {
         return { url: `${billingUrl}?status=active` };
       }
 
       const dynamicKobo =
-        proPlan?.price.amountNgn && proPlan.price.amountNgn > 0
-          ? Math.round(proPlan.price.amountNgn * 100)
+        targetPaidPlan?.price.amountNgn && targetPaidPlan.price.amountNgn > 0
+          ? Math.round(targetPaidPlan.price.amountNgn * 100)
           : PAYSTACK_PRO_AMOUNT_KOBO;
 
       try {
@@ -135,6 +168,8 @@ export const appRouter = router({
           userId: userId,
           amountKobo: dynamicKobo,
           callbackUrl: billingUrl,
+          planSlug: targetPaidPlan?.slug || "pro",
+          planName: targetPaidPlan?.name || "Pro",
         });
 
         return { url: paystackSession.authorization_url };
@@ -165,7 +200,7 @@ export const appRouter = router({
 
     const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    if (subscriptionPlan.isSubscribed && !input?.renew) {
+    if (subscriptionPlan.isSubscribed && !input?.renew && !input?.planSlug) {
       await db.user.update({
         where: { id: userId },
         data: {
@@ -182,7 +217,7 @@ export const appRouter = router({
           customerId:
             dbUser.customerId || `cus_test_${userId.slice(0, 8)}`,
           subscriptionId: `sub_test_${Date.now()}`,
-          planPriceId: proPlan?.slug || "pro",
+          planPriceId: targetPaidPlan?.slug || "pro",
           currentPeriodEnd: thirtyDaysFromNow,
         },
       });
@@ -219,8 +254,10 @@ export const appRouter = router({
             await grantUserProAccess(
               userId,
               input.reference,
-              txData.customer?.customer_code
+              txData.customer?.customer_code,
+              txData.metadata?.planSlug
             );
+            revalidatePlanPaths();
             return { success: true as const, verified: true };
           }
 
@@ -680,7 +717,7 @@ export const appRouter = router({
       }
 
       if (input.action === "REVOKE_TO_FREE" || input.planSlug === "free") {
-        return await db.user.update({
+        const updated = await db.user.update({
           where: { id: input.userId },
           data: {
             planPriceId: null,
@@ -688,6 +725,8 @@ export const appRouter = router({
             currentPeriodEnd: null,
           },
         });
+        revalidatePlanPaths();
+        return updated;
       }
 
       const dynamicPlans = await getDynamicPlans();
@@ -697,7 +736,7 @@ export const appRouter = router({
         dynamicPlans.find((p) => p.slug !== "free");
 
       if (!targetPlan || targetPlan.slug === "free") {
-        return await db.user.update({
+        const updated = await db.user.update({
           where: { id: input.userId },
           data: {
             planPriceId: null,
@@ -705,6 +744,8 @@ export const appRouter = router({
             currentPeriodEnd: null,
           },
         });
+        revalidatePlanPaths();
+        return updated;
       }
 
       const currentEnd =
@@ -722,7 +763,7 @@ export const appRouter = router({
         user.subscriptionId &&
         !user.subscriptionId.startsWith("sub_test_");
 
-      return await db.user.update({
+      const updated = await db.user.update({
         where: { id: input.userId },
         data: {
           customerId:
@@ -736,6 +777,8 @@ export const appRouter = router({
           currentPeriodEnd: newPeriodEnd,
         },
       });
+      revalidatePlanPaths();
+      return updated;
     }),
 
   adminDeleteUser: adminProcedure
@@ -828,12 +871,21 @@ export const appRouter = router({
         });
       }
 
-      return await db.planConfig.create({
+      const syncedFeatures = syncPlanFeatureBullets(input.features, {
+        quota: input.quota,
+        pagesPerPdf: input.pagesPerPdf,
+        maxFileSizeMB: input.maxFileSizeMB,
+      });
+
+      const created = await db.planConfig.create({
         data: {
           ...input,
+          features: syncedFeatures,
           slug: cleanSlug,
         },
       });
+      revalidatePlanPaths();
+      return created;
     }),
 
   adminUpdatePlan: adminProcedure
@@ -853,7 +905,13 @@ export const appRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      return await db.planConfig.upsert({
+      const syncedFeatures = syncPlanFeatureBullets(input.features, {
+        quota: input.quota,
+        pagesPerPdf: input.pagesPerPdf,
+        maxFileSizeMB: input.maxFileSizeMB,
+      });
+
+      const updated = await db.planConfig.upsert({
         where: { slug: input.slug },
         update: {
           name: input.name,
@@ -863,7 +921,7 @@ export const appRouter = router({
           quota: input.quota,
           pagesPerPdf: input.pagesPerPdf,
           maxFileSizeMB: input.maxFileSizeMB,
-          features: input.features,
+          features: syncedFeatures,
           isPopular: Boolean(input.isPopular),
         },
         create: {
@@ -876,10 +934,12 @@ export const appRouter = router({
           quota: input.quota,
           pagesPerPdf: input.pagesPerPdf,
           maxFileSizeMB: input.maxFileSizeMB,
-          features: input.features,
+          features: syncedFeatures,
           isPopular: Boolean(input.isPopular),
         },
       });
+      revalidatePlanPaths();
+      return updated;
     }),
 
   adminDeletePlan: adminProcedure
@@ -891,15 +951,49 @@ export const appRouter = router({
           message: "The default Free tier cannot be deleted.",
         });
       }
-      return await db.planConfig.delete({
+      const deleted = await db.planConfig.delete({
         where: { slug: input.slug },
       });
+      revalidatePlanPaths();
+      return deleted;
     }),
 
   adminResetDefaultPlans: adminProcedure.mutation(async () => {
     if (typeof db.planConfig?.resetDefaults === "function") {
-      return await db.planConfig.resetDefaults();
+      const reset = await db.planConfig.resetDefaults();
+      revalidatePlanPaths();
+      return reset;
     }
+
+    for (const def of DEFAULT_PLAN_CONFIGS) {
+      await db.planConfig.upsert({
+        where: { slug: def.slug },
+        update: {
+          name: def.name,
+          tagline: def.tagline,
+          price: def.price,
+          priceNgn: def.priceNgn,
+          quota: def.quota,
+          pagesPerPdf: def.pagesPerPdf,
+          maxFileSizeMB: def.maxFileSizeMB,
+          features: def.features,
+          isPopular: def.isPopular,
+        },
+        create: {
+          slug: def.slug,
+          name: def.name,
+          tagline: def.tagline,
+          price: def.price,
+          priceNgn: def.priceNgn,
+          quota: def.quota,
+          pagesPerPdf: def.pagesPerPdf,
+          maxFileSizeMB: def.maxFileSizeMB,
+          features: def.features,
+          isPopular: def.isPopular,
+        },
+      });
+    }
+    revalidatePlanPaths();
     return await getDynamicPlans();
   }),
 

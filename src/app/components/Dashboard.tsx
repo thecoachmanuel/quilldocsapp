@@ -21,16 +21,17 @@ import Skeleton from "react-loading-skeleton";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useState } from "react";
-import { getUserSubscriptionPlan } from "@/lib/subscription";
+import { getUserSubscriptionPlan, DynamicPlan } from "@/lib/subscription";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 
 interface PageProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
+  upgradePlan?: DynamicPlan | null;
 }
 
-const Dashboard = ({ subscriptionPlan }: PageProps) => {
+const Dashboard = ({ subscriptionPlan, upgradePlan = null }: PageProps) => {
   const router = useRouter();
   const [currentlyDeletingFile, setCurrentlyDeletingFile] = useState<
     string | null
@@ -38,6 +39,29 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
 
   const utils = trpc.useContext();
+
+  const { data: livePlans } = trpc.getPublicPlans.useQuery(undefined, {
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+
+  const liveUserPlan = livePlans?.find(
+    (p) =>
+      p.slug === (subscriptionPlan as { slug?: string }).slug ||
+      (!((subscriptionPlan as { slug?: string }).slug) &&
+        p.name === subscriptionPlan.name)
+  );
+  const activePlan = liveUserPlan
+    ? { ...subscriptionPlan, ...liveUserPlan }
+    : subscriptionPlan;
+  const activeUpgradePlan =
+    livePlans?.find((p) => p.slug === "pro") ||
+    livePlans?.find(
+      (p) =>
+        p.slug !== "free" &&
+        ((p.price?.amount ?? 0) > 0 || (p.price?.amountNgn ?? 0) > 0)
+    ) ||
+    upgradePlan;
 
   const { data: files, isLoading } = trpc.getUserFiles.useQuery(undefined, {
     refetchOnMount: "always",
@@ -96,11 +120,11 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
               {subscriptionPlan.isSubscribed ? (
                 <>
                   <Gem className="h-3.5 w-3.5 text-blue-600" />
-                  PRO Plan ({files?.length ?? 0}/{subscriptionPlan.quota} files)
+                  {activePlan.name} Plan ({files?.length ?? 0}/{activePlan.quota} files)
                 </>
               ) : (
                 <>
-                  Free Plan ({files?.length ?? 0}/{subscriptionPlan.quota} files)
+                  {activePlan.name} Plan ({files?.length ?? 0}/{activePlan.quota} files)
                 </>
               )}
             </span>
@@ -115,7 +139,7 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
                     "text-blue-600 hover:text-blue-700 text-xs h-7 px-2 font-medium",
                 })}
               >
-                Upgrade to Pro <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                Upgrade to {activeUpgradePlan?.name || "Pro"} <ArrowRight className="ml-1 h-3.5 w-3.5" />
               </Link>
             )}
           </div>
@@ -139,7 +163,10 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
           <UploadButton
             isSubscribed={subscriptionPlan.isSubscribed}
             currentFilesCount={files?.length ?? 0}
-            maxQuota={subscriptionPlan.quota}
+            maxQuota={activePlan.quota}
+            maxFileSizeMB={activePlan.maxFileSizeMB}
+            planName={activePlan.name}
+            upgradePlan={activeUpgradePlan}
           />
         </div>
       </div>

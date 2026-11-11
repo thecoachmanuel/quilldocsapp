@@ -34,6 +34,7 @@ export interface InitializePaystackParams {
   callbackUrl: string;
   userId: string;
   planSlug?: string;
+  planName?: string;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function initializePaystackTransaction(
           {
             display_name: "Plan",
             variable_name: "plan",
-            value: "QuillDocs Pro (Monthly)",
+            value: `QuillDocs ${params.planName || "Pro"} (Monthly)`,
           },
           {
             display_name: "User ID",
@@ -161,7 +162,8 @@ export function verifyPaystackSignature(
 export async function grantUserProAccess(
   userId: string,
   reference: string,
-  customerCode?: string
+  customerCode?: string,
+  planSlug?: string
 ) {
   const existingUser = await db.user.findFirst({
     where: { id: userId },
@@ -188,11 +190,13 @@ export async function grantUserProAccess(
       : Date.now();
 
   const newPeriodEnd = new Date(currentEnd + 30 * 24 * 60 * 60 * 1000);
+  const targetPlanSlug =
+    planSlug && planSlug !== "free" ? planSlug : "pro";
 
   const updatedUser = await db.user.update({
     where: { id: userId },
     data: {
-      planPriceId: "pro",
+      planPriceId: targetPlanSlug,
       subscriptionId: normalizedSubId,
       customerId:
         customerCode ||
@@ -203,7 +207,7 @@ export async function grantUserProAccess(
   });
 
   console.log(
-    `[paystack] Upgraded user ${userId} to PRO until ${newPeriodEnd.toISOString()}`
+    `[paystack] Upgraded user ${userId} to ${targetPlanSlug} until ${newPeriodEnd.toISOString()}`
   );
   return updatedUser;
 }

@@ -43,11 +43,15 @@ export interface DocumentInfo {
 interface MultiDocumentViewLayoutProps {
   initialFiles: DocumentInfo[];
   allUserFiles: DocumentInfo[];
+  planName?: string;
+  pagesPerPdf?: number;
 }
 
 export default function MultiDocumentViewLayout({
   initialFiles,
   allUserFiles,
+  planName = "Free",
+  pagesPerPdf = 5,
 }: MultiDocumentViewLayoutProps) {
   const router = useRouter();
 
@@ -422,6 +426,8 @@ export default function MultiDocumentViewLayout({
               fileId={multiSessionId}
               fileIds={selectedFiles.map((f) => f.id)}
               isExpanded={isChatExpanded}
+              planName={planName}
+              pagesPerPdf={pagesPerPdf}
             />
           </div>
         </div>

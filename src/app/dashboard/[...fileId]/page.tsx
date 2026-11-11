@@ -2,6 +2,7 @@ import DocumentViewLayout from "@/app/components/DocumentViewLayout";
 import { db } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
 import { ensureDbUser } from "@/lib/auth-rbac";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { notFound, redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -39,12 +40,15 @@ async function Page({ params }: PageProps) {
   }
 
   await ensureDbUser(user);
-  const file = await db.file.findFirst({
-    where: {
-      id: fileId,
-      userId: user.id,
-    },
-  });
+  const [file, subscriptionPlan] = await Promise.all([
+    db.file.findFirst({
+      where: {
+        id: fileId,
+        userId: user.id,
+      },
+    }),
+    getUserSubscriptionPlan(),
+  ]);
 
   if (!file) notFound();
 
@@ -53,6 +57,8 @@ async function Page({ params }: PageProps) {
       fileId={fileId}
       url={file.url}
       fileName={file.name}
+      planName={subscriptionPlan.name}
+      pagesPerPdf={subscriptionPlan.pagesPerPdf}
     />
   );
 }

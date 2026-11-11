@@ -3,7 +3,6 @@ import { ensureDbUser } from "@/lib/auth-rbac";
 import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { db } from "@/db";
 import { getUserSubscriptionPlan } from "@/lib/subscription";
-import { PLANS } from "@/config/plans";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { parseDocument } from "@/lib/document-parser";
 
@@ -30,15 +29,14 @@ const middleware = async () => {
   await ensureDbUser(user);
 
   const subscriptionPlan = await getUserSubscriptionPlan();
-  const plan = subscriptionPlan.isSubscribed ? PLANS[1] : PLANS[0];
 
   const currentFilesCount = await db.file.count({
     where: { userId: user.id },
   });
 
-  if (currentFilesCount >= plan.quota) {
+  if (currentFilesCount >= subscriptionPlan.quota) {
     throw new Error(
-      `You have reached the maximum quota of ${plan.quota} documents on the ${plan.name} plan.`
+      `You have reached the maximum quota of ${subscriptionPlan.quota} documents on the ${subscriptionPlan.name} plan.`
     );
   }
 
@@ -80,13 +78,8 @@ const onUploadComplete = async ({
     const parsed = await parseDocument(fileUrl);
     const pagesAmt = parsed.totalSlides || Math.max(1, Math.ceil(parsed.totalWords / 400));
     const { subscriptionPlan } = metadata;
-    const { isSubscribed } = subscriptionPlan;
-    const isProExceeded =
-      pagesAmt > PLANS.find((plan) => plan.name === "Pro")!.pagesPerPdf;
-    const isFreeExceeded =
-      pagesAmt > PLANS.find((plan) => plan.name === "Free")!.pagesPerPdf;
 
-    if ((isSubscribed && isProExceeded) || (!isSubscribed && isFreeExceeded)) {
+    if (pagesAmt > subscriptionPlan.pagesPerPdf) {
       await db.file.update({
         data: {
           uploadStatus: "FAILED",
@@ -120,14 +113,14 @@ const onUploadComplete = async ({
 
 export const ourFileRouter = {
   freePlanUploader: f({
-    pdf: { maxFileSize: "4MB" },
-    blob: { maxFileSize: "4MB" },
+    pdf: { maxFileSize: "64MB" },
+    blob: { maxFileSize: "64MB" },
   })
     .middleware(middleware)
     .onUploadComplete(onUploadComplete),
   proPlanUploader: f({
-    pdf: { maxFileSize: "16MB" },
-    blob: { maxFileSize: "16MB" },
+    pdf: { maxFileSize: "64MB" },
+    blob: { maxFileSize: "64MB" },
   })
     .middleware(middleware)
     .onUploadComplete(onUploadComplete),

@@ -6,7 +6,7 @@ export default function Footer() {
 
   return (
     <footer className="border-t border-zinc-200 bg-white/90 backdrop-blur-sm transition-all mt-auto">
-      <MaxWidthWrapper className="py-12 md:py-16">
+      <MaxWidthWrapper className="pt-12 pb-8 md:pt-16 md:pb-10">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-4 lg:gap-12">
           {/* Brand Info */}
           <div className="space-y-4 md:col-span-1">
@@ -15,9 +15,6 @@ export default function Footer() {
             </Link>
             <p className="text-sm text-zinc-500 leading-relaxed">
               Intelligent document conversations. Chat with PDFs, Word documents, and presentations with high-precision page-level citations.
-            </p>
-            <p className="text-xs text-zinc-400">
-              © {currentYear} QuillDocs. All rights reserved.
             </p>
           </div>
 
@@ -117,6 +114,12 @@ export default function Footer() {
               </li>
             </ul>
           </div>
+        </div>
+
+        <div className="mt-10 border-t border-zinc-200/80 pt-6">
+          <p className="text-xs text-zinc-400 text-center md:text-left">
+            © {currentYear} QuillDocs. All rights reserved.
+          </p>
         </div>
       </MaxWidthWrapper>
     </footer>

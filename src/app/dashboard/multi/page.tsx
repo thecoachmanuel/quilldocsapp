@@ -3,6 +3,7 @@ import MultiDocumentViewLayout, {
 } from "@/app/components/MultiDocumentViewLayout";
 import { db } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
+import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { notFound, redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -26,15 +27,18 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
     );
   }
 
-  // Retrieve all files belonging to this user
-  const allUserFiles = await db.file.findMany({
-    where: {
-      userId: user.id,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  // Retrieve all files belonging to this user and active plan limits
+  const [allUserFiles, subscriptionPlan] = await Promise.all([
+    db.file.findMany({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    }),
+    getUserSubscriptionPlan(),
+  ]);
 
   if (allUserFiles.length === 0) {
     redirect("/dashboard");
@@ -77,6 +81,8 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
     <MultiDocumentViewLayout
       initialFiles={sanitizedInitial}
       allUserFiles={sanitizedAll}
+      planName={subscriptionPlan.name}
+      pagesPerPdf={subscriptionPlan.pagesPerPdf}
     />
   );
 }

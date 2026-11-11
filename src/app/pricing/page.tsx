@@ -88,7 +88,7 @@ async function Page() {
                             {isFree
                               ? "Free"
                               : `₦${(
-                                  planItem.price?.amountNgn || 18000
+                                  planItem.price?.amountNgn ?? 18000
                                 ).toLocaleString()}`}
                           </span>
                           {!isFree && (
@@ -171,7 +171,8 @@ async function Page() {
                           </RegisterLink>
                         )
                       ) : user ? (
-                        subscriptionPlan.isSubscribed ? (
+                        subscriptionPlan.isSubscribed &&
+                        subscriptionPlan.slug === planItem.slug ? (
                           <Link
                             href="/dashboard/billing?manage=true"
                             className={buttonVariants({
@@ -182,7 +183,10 @@ async function Page() {
                             <ArrowRight className="h-5 w-5 ml-1.5" />
                           </Link>
                         ) : (
-                          <UpgradeButton />
+                          <UpgradeButton
+                            planSlug={planItem.slug}
+                            planName={planItem.name}
+                          />
                         )
                       ) : (
                         <RegisterLink

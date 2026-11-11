@@ -1,7 +1,7 @@
 import { getKindeServerSession } from "@/lib/kinde";
 import { db } from "@/db";
 import { ensureDbUser } from "@/lib/auth-rbac";
-import { getUserSubscriptionPlan } from "@/lib/subscription";
+import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
 import { saveDocumentBuffer } from "@/lib/document-storage";
 import { vectorizeAndIndexDocument } from "@/lib/vectorize";
 import { NextRequest, NextResponse } from "next/server";
@@ -33,14 +33,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const subscriptionPlan = await getUserSubscriptionPlan();
+    const [subscriptionPlan, dynamicPlans] = await Promise.all([
+      getUserSubscriptionPlan(),
+      getDynamicPlans(),
+    ]);
     const isSubscribed = Boolean(subscriptionPlan?.isSubscribed);
-    const planQuota = subscriptionPlan?.quota || (isSubscribed ? 50 : 10);
+    const planQuota = subscriptionPlan?.quota ?? (isSubscribed ? 50 : 10);
     const planName = subscriptionPlan?.name || (isSubscribed ? "Pro" : "Free");
     const planMaxMB =
-      subscriptionPlan?.maxFileSizeMB || (isSubscribed ? 16 : 4);
+      subscriptionPlan?.maxFileSizeMB ?? (isSubscribed ? 16 : 4);
     const planMaxPages =
-      subscriptionPlan?.pagesPerPdf || (isSubscribed ? 25 : 5);
+      subscriptionPlan?.pagesPerPdf ?? (isSubscribed ? 25 : 5);
+    const upgradePlan =
+      dynamicPlans.find((p) => p.slug === "pro") ||
+      dynamicPlans.find((p) => p.slug !== "free");
+    const upgradePlanName = upgradePlan?.name || "Pro";
 
     // 1. Quota Check: enforce dynamic plan quota
     const currentFilesCount = await db.file.count({
@@ -51,7 +58,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: `You have reached the maximum quota of ${planQuota} documents on the ${planName} plan. ${!isSubscribed
-              ? "Upgrade to Pro to upload more documents."
+              ? `Upgrade to ${upgradePlanName} to upload more documents.`
               : "Please delete some files to upload more."
             }`,
           quotaExceeded: true,
@@ -88,7 +95,7 @@ export async function POST(req: NextRequest) {
     if (file.size > maxFileSize) {
       return NextResponse.json(
         {
-          error: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the ${planMaxMB}MB limit for the ${planName} plan. ${!isSubscribed ? "Upgrade to Pro for larger file uploads." : ""
+          error: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the ${planMaxMB}MB limit for the ${planName} plan. ${!isSubscribed ? `Upgrade to ${upgradePlanName} for larger file uploads.` : ""
             }`,
           fileSizeExceeded: true,
         },
@@ -131,7 +138,7 @@ export async function POST(req: NextRequest) {
     if (pageCount > maxPages) {
       return NextResponse.json(
         {
-          error: `This document contains ${pageCount} pages, which exceeds the ${maxPages}-page limit for the ${planName} plan. ${!isSubscribed ? "Upgrade to Pro for higher page limits." : ""
+          error: `This document contains ${pageCount} pages, which exceeds the ${maxPages}-page limit for the ${planName} plan. ${!isSubscribed ? `Upgrade to ${upgradePlanName} for higher page limits.` : ""
             }`,
           pagesExceeded: true,
           pageCount,

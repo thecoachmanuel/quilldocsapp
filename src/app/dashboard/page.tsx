@@ -1,7 +1,7 @@
 import { getKindeServerSession } from "@/lib/kinde";
 import { redirect } from "next/navigation";
 import Dashboard from "../components/Dashboard";
-import { getUserSubscriptionPlan } from "@/lib/subscription";
+import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
 import { ensureDbUser } from "@/lib/auth-rbac";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +17,22 @@ async function page() {
 
   await ensureDbUser(user);
 
-  const subscriptionPlan = await getUserSubscriptionPlan();
+  const [subscriptionPlan, dynamicPlans] = await Promise.all([
+    getUserSubscriptionPlan(),
+    getDynamicPlans(),
+  ]);
 
-  return <Dashboard subscriptionPlan={subscriptionPlan} />;
+  const upgradePlan =
+    dynamicPlans.find((p) => p.slug === "pro") ||
+    dynamicPlans.find((p) => p.slug !== "free") ||
+    null;
+
+  return (
+    <Dashboard
+      subscriptionPlan={subscriptionPlan}
+      upgradePlan={upgradePlan}
+    />
+  );
 }
 
 export default page;

@@ -21,12 +21,16 @@ interface DocumentViewLayoutProps {
   fileId: string;
   url: string;
   fileName?: string;
+  planName?: string;
+  pagesPerPdf?: number;
 }
 
 export default function DocumentViewLayout({
   fileId,
   url,
   fileName,
+  planName = "Free",
+  pagesPerPdf = 5,
 }: DocumentViewLayoutProps) {
   const [isMobileChatOpen, setIsMobileChatOpen] = useState<boolean>(false);
   const [isChatExpanded, setIsChatExpanded] = useState<boolean>(false);
@@ -233,7 +237,12 @@ export default function DocumentViewLayout({
 
           {/* Chat Content Container */}
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <ChatWrapper fileId={fileId} isExpanded={isChatExpanded} />
+            <ChatWrapper
+              fileId={fileId}
+              isExpanded={isChatExpanded}
+              planName={planName}
+              pagesPerPdf={pagesPerPdf}
+            />
           </div>
         </div>
       </div>

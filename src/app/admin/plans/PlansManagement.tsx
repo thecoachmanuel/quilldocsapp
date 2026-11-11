@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { trpc } from "@/app/_trpc/client";
+import { syncPlanFeatureBullets } from "@/lib/plan-utils";
 import Link from "next/link";
 import {
   CreditCard,
@@ -207,9 +208,10 @@ export default function PlansManagement() {
 
   const handleSavePlan = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanedFeatures = features
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
+    const cleanedFeatures = syncPlanFeatureBullets(
+      features.map((f) => f.trim()).filter((f) => f.length > 0),
+      { quota, pagesPerPdf, maxFileSizeMB }
+    );
 
     if (isEditing) {
       updatePlanMutation.mutate({
@@ -525,7 +527,19 @@ export default function PlansManagement() {
                   min={1}
                   required
                   value={quota}
-                  onChange={(e) => setQuota(Number(e.target.value))}
+                  onChange={(e) => {
+                    const nextQuota = Number(e.target.value);
+                    setQuota(nextQuota);
+                    if (nextQuota > 0) {
+                      setFeatures((prev) =>
+                        syncPlanFeatureBullets(prev, {
+                          quota: nextQuota,
+                          pagesPerPdf,
+                          maxFileSizeMB,
+                        })
+                      );
+                    }
+                  }}
                   className="bg-white"
                 />
               </div>
@@ -539,7 +553,19 @@ export default function PlansManagement() {
                   min={1}
                   required
                   value={pagesPerPdf}
-                  onChange={(e) => setPagesPerPdf(Number(e.target.value))}
+                  onChange={(e) => {
+                    const nextPages = Number(e.target.value);
+                    setPagesPerPdf(nextPages);
+                    if (nextPages > 0) {
+                      setFeatures((prev) =>
+                        syncPlanFeatureBullets(prev, {
+                          quota,
+                          pagesPerPdf: nextPages,
+                          maxFileSizeMB,
+                        })
+                      );
+                    }
+                  }}
                   className="bg-white"
                 />
               </div>
@@ -553,7 +579,19 @@ export default function PlansManagement() {
                   min={1}
                   required
                   value={maxFileSizeMB}
-                  onChange={(e) => setMaxFileSizeMB(Number(e.target.value))}
+                  onChange={(e) => {
+                    const nextMaxMB = Number(e.target.value);
+                    setMaxFileSizeMB(nextMaxMB);
+                    if (nextMaxMB > 0) {
+                      setFeatures((prev) =>
+                        syncPlanFeatureBullets(prev, {
+                          quota,
+                          pagesPerPdf,
+                          maxFileSizeMB: nextMaxMB,
+                        })
+                      );
+                    }
+                  }}
                   className="bg-white"
                 />
               </div>

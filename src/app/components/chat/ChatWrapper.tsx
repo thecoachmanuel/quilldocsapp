@@ -12,12 +12,16 @@ interface ChatWrapperProps {
   fileId: string;
   fileIds?: string[];
   isExpanded?: boolean;
+  planName?: string;
+  pagesPerPdf?: number;
 }
 
 function ChatWrapper({
   fileId,
   fileIds,
   isExpanded = false,
+  planName = "Free",
+  pagesPerPdf = 5,
 }: ChatWrapperProps) {
   const [forceReady, setForceReady] = useState(false);
 
@@ -87,8 +91,8 @@ function ChatWrapper({
             <XCircle className="h-8 w-8 text-red-500 " />
             <h3 className="font-semibold text-xl">Document exceeds plan limit</h3>
             <p className="text-zinc-500 text-sm">
-              Your <span className="font-medium">Free</span> plan supports documents
-              up to 5 pages or slides.
+              Your <span className="font-medium">{planName}</span> plan supports
+              documents up to {pagesPerPdf} pages or slides.
             </p>
             <Link
               href="/dashboard"

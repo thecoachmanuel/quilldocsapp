@@ -1,6 +1,7 @@
 "use client";
 
-import { getUserSubscriptionPlan } from "@/lib/subscription";
+import { getUserSubscriptionPlan, DynamicPlan } from "@/lib/subscription";
+import { buildPlanDisplayFeatures } from "@/lib/plan-utils";
 import { trpc } from "@/app/_trpc/client";
 import MaxWidthWrapper from "./MaxWidthWrapper";
 import {
@@ -35,11 +36,13 @@ import { useEffect, useRef, useState } from "react";
 
 interface BillingFormProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
+  plans?: DynamicPlan[];
   billingGateway?: "paystack" | "none";
 }
 
 const BillingForm = ({
   subscriptionPlan,
+  plans = [],
   billingGateway = "paystack",
 }: BillingFormProps) => {
   const { toast } = useToast();
@@ -156,37 +159,47 @@ const BillingForm = ({
       },
     });
 
-  const displayPriceNgn =
-    (subscriptionPlan as any)?.price?.amountNgn || 18000;
-  const displayPriceUsd =
-    (subscriptionPlan as any)?.price?.amount || 14;
+  const { data: livePlans } = trpc.getPublicPlans.useQuery(undefined, {
+    initialData: plans.length > 0 ? plans : undefined,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+  const activePlans = livePlans && livePlans.length > 0 ? livePlans : plans;
+  const freePlan =
+    activePlans.find((p) => p.slug === "free") || activePlans[0];
+  const upgradePlan =
+    activePlans.find((p) => p.slug === "pro") ||
+    activePlans.find(
+      (p) =>
+        p.slug !== "free" &&
+        ((p.price?.amount ?? 0) > 0 || (p.price?.amountNgn ?? 0) > 0)
+    ) ||
+    activePlans[1];
+
+  const liveUserPlan = activePlans.find(
+    (p) =>
+      p.slug === (subscriptionPlan as { slug?: string }).slug ||
+      p.name === subscriptionPlan.name
+  );
+  const livePlan = liveUserPlan
+    ? { ...subscriptionPlan, ...liveUserPlan }
+    : subscriptionPlan;
 
   const isPro = subscriptionPlan.isSubscribed;
 
-  const currentFeatures = isPro
-    ? [
-      "50 documents included per month",
-      "Up to 25 pages per document",
-      "16MB maximum file size limit",
-      "Higher-quality AI responses with deep context (60k chars)",
-      "Priority processing and instant model fallback",
-    ]
-    : [
-      "10 documents included per month",
-      "Up to 5 pages per document",
-      "4MB maximum file size limit",
-      "Standard AI responses (15k chars context)",
-      "Standard processing",
-    ];
+  const displayPriceNgn = isPro
+    ? (livePlan as any)?.price?.amountNgn ??
+      upgradePlan?.price?.amountNgn ??
+      18000
+    : upgradePlan?.price?.amountNgn ?? 18000;
+  const displayPriceUsd = isPro
+    ? (livePlan as any)?.price?.amount ??
+      upgradePlan?.price?.amount ??
+      14
+    : upgradePlan?.price?.amount ?? 14;
 
-  const proFeatures = [
-    "50 documents included per month (5x increase)",
-    "Up to 25 pages per PDF / presentation",
-    "16MB maximum file size limit",
-    "High-precision 4x context AI inference",
-    "Automated study guides & mock exam questions",
-    "Priority support & fastest processing queue",
-  ];
+  const currentFeatures = buildPlanDisplayFeatures(livePlan);
+  const proFeatures = upgradePlan ? buildPlanDisplayFeatures(upgradePlan) : [];
 
   const paymentMethodLabel = subscriptionPlan.subscriptionId?.startsWith(
     "paystack_"
@@ -206,7 +219,7 @@ const BillingForm = ({
             setConfirmDowngrade(false);
             setIsManageOpen(true);
           } else {
-            createPaystackSession();
+            createPaystackSession({ planSlug: upgradePlan?.slug });
           }
         }}
       >
@@ -225,7 +238,7 @@ const BillingForm = ({
                 <CardDescription className="mt-1.5 text-zinc-600">
                   You are currently on the{" "}
                   <strong className="text-zinc-900 font-semibold">
-                    {subscriptionPlan.name}
+                    {livePlan.name}
                   </strong>{" "}
                   plan.
                 </CardDescription>
@@ -248,7 +261,7 @@ const BillingForm = ({
           <CardContent className="space-y-5">
             <div className="rounded-lg bg-zinc-50 border border-zinc-200/80 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">
-                Included with your {subscriptionPlan.name} plan:
+                Included with your {livePlan.name} plan:
               </p>
               <ul className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 {currentFeatures.map((feat) => (
@@ -309,7 +322,7 @@ const BillingForm = ({
                 ? "Verifying Payment..."
                 : isPro
                   ? "Manage Subscription"
-                  : `Upgrade to PRO (₦${displayPriceNgn.toLocaleString()} / mo)`}
+                  : `Upgrade to ${upgradePlan?.name || "Pro"} (₦${displayPriceNgn.toLocaleString()} / mo)`}
             </Button>
 
             {subscriptionPlan.isSubscribed ? (
@@ -352,7 +365,7 @@ const BillingForm = ({
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-lg font-bold text-zinc-900">
                 <CreditCard className="h-5 w-5 text-blue-600" />
-                Manage {subscriptionPlan.name} Subscription
+                Manage {livePlan.name} Subscription
               </DialogTitle>
               <DialogDescription className="text-xs text-zinc-500">
                 Review your active plan details, extend billing time, or switch plans.
@@ -365,7 +378,7 @@ const BillingForm = ({
                   <span className="text-zinc-500">Current Plan</span>
                   <span className="inline-flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full text-xs border border-blue-200">
                     <Gem className="h-3 w-3" />
-                    {subscriptionPlan.name}
+                    {livePlan.name}
                   </span>
                 </div>
 
@@ -391,7 +404,7 @@ const BillingForm = ({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-zinc-500">Plan Limits</span>
                   <span className="font-medium text-zinc-800 text-xs sm:text-sm text-right">
-                    {subscriptionPlan.quota} docs · {subscriptionPlan.pagesPerPdf} pages · {subscriptionPlan.maxFileSizeMB}MB
+                    {livePlan.quota} docs · {livePlan.pagesPerPdf} pages · {livePlan.maxFileSizeMB}MB
                   </span>
                 </div>
 
@@ -410,7 +423,7 @@ const BillingForm = ({
                   <Button
                     type="button"
                     disabled={isLoading || isCanceling}
-                    onClick={() => createPaystackSession({ renew: true })}
+                    onClick={() => createPaystackSession({ renew: true, planSlug: livePlan.slug })}
                     className="w-full gap-2"
                   >
                     {isLoading ? (
@@ -427,7 +440,8 @@ const BillingForm = ({
                 {!confirmDowngrade ? (
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-zinc-500">
-                      Need a break from PRO? Switch back to Free anytime.
+                      Need a break from {livePlan.name}? Switch back to{" "}
+                      {freePlan?.name || "Free"} anytime.
                     </p>
                     <Button
                       type="button"
@@ -437,7 +451,7 @@ const BillingForm = ({
                       onClick={() => setConfirmDowngrade(true)}
                       className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 shrink-0"
                     >
-                      Downgrade to Free
+                      Downgrade to {freePlan?.name || "Free"}
                     </Button>
                   </div>
                 ) : (
@@ -446,7 +460,10 @@ const BillingForm = ({
                       <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
                       <p>
                         Downgrading switches your account to the{" "}
-                        <strong>Free plan</strong> (10 documents max, 5 pages per document, 4MB limit). Your uploaded documents and chats stay preserved.
+                        <strong>{freePlan?.name || "Free"} plan</strong> (
+                        {freePlan?.quota ?? 10} documents max,{" "}
+                        {freePlan?.pagesPerPdf ?? 5} pages per document,{" "}
+                        {freePlan?.maxFileSizeMB ?? 4}MB limit). Your uploaded documents and chats stay preserved.
                       </p>
                     </div>
                     <div className="flex items-center justify-end gap-2">
@@ -457,7 +474,7 @@ const BillingForm = ({
                         disabled={isCanceling}
                         onClick={() => setConfirmDowngrade(false)}
                       >
-                        Keep PRO
+                        Keep {livePlan.name}
                       </Button>
                       <Button
                         type="button"

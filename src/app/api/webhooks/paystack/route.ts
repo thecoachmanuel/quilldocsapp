@@ -32,9 +32,10 @@ export async function POST(request: Request) {
 
       const reference = eventData?.reference;
       const customerCode = eventData?.customer?.customer_code;
+      const planSlug = eventData?.metadata?.planSlug;
 
       if (userId && reference) {
-        await grantUserProAccess(userId, reference, customerCode);
+        await grantUserProAccess(userId, reference, customerCode, planSlug);
         console.log(
           `[paystack webhook] Successfully granted PRO access to user ${userId} for ref ${reference}`
         );

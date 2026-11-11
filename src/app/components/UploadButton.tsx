@@ -19,12 +19,19 @@ import { useState } from "react";
 import DropZone from "react-dropzone";
 import { trpc } from "../_trpc/client";
 import { useRouter } from "next/navigation";
+import { DynamicPlan } from "@/lib/subscription";
 
 const UploadDropZone = ({
   isSubscribed,
+  maxFileSizeMB = isSubscribed ? 16 : 4,
+  planName = isSubscribed ? "Pro" : "Free",
+  upgradePlan,
   closeDialog,
 }: {
   isSubscribed: boolean;
+  maxFileSizeMB?: number;
+  planName?: string;
+  upgradePlan?: DynamicPlan | null;
   closeDialog?: () => void;
 }) => {
   const router = useRouter();
@@ -94,18 +101,18 @@ const UploadDropZone = ({
       onDrop={async (acceptedFile) => {
         if (!acceptedFile || !acceptedFile[0]) return;
 
-        // Client-side file size check
-        const maxBytes = isSubscribed ? 16 * 1024 * 1024 : 4 * 1024 * 1024;
+        // Client-side file size check using live plan maxFileSizeMB
+        const maxBytes = maxFileSizeMB * 1024 * 1024;
         if (acceptedFile[0].size > maxBytes) {
           return toast({
             title: "File Size Limit Exceeded",
             description: `This file is ${(
               acceptedFile[0].size /
               (1024 * 1024)
-            ).toFixed(1)}MB. Your ${
-              isSubscribed ? "PRO" : "Free"
-            } plan limit is ${isSubscribed ? "16MB" : "4MB"}.${
-              !isSubscribed ? " Upgrade to PRO for up to 16MB files." : ""
+            ).toFixed(1)}MB. Your ${planName} plan limit is ${maxFileSizeMB}MB.${
+              !isSubscribed && upgradePlan
+                ? ` Upgrade to ${upgradePlan.name} for up to ${upgradePlan.maxFileSizeMB}MB files.`
+                : ""
             }`,
             variant: "destructive",
           });
@@ -235,7 +242,7 @@ const UploadDropZone = ({
                 </p>
                 <p className="text-xs text-zinc-500">
                   PDF, Word (.docx) or PowerPoint (.pptx) up to{" "}
-                  {isSubscribed ? "16" : "4"}MB
+                  {maxFileSizeMB}MB
                 </p>
               </div>
               {acceptedFiles && acceptedFiles[0] ? (
@@ -292,10 +299,16 @@ function UploadButton({
   isSubscribed,
   currentFilesCount = 0,
   maxQuota = 10,
+  maxFileSizeMB = isSubscribed ? 16 : 4,
+  planName = isSubscribed ? "Pro" : "Free",
+  upgradePlan = null,
 }: {
   isSubscribed: boolean;
   currentFilesCount?: number;
   maxQuota?: number;
+  maxFileSizeMB?: number;
+  planName?: string;
+  upgradePlan?: DynamicPlan | null;
 }) {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const router = useRouter();
@@ -324,10 +337,12 @@ function UploadButton({
             </h3>
             <p className="text-sm text-zinc-600 mb-5 max-w-sm">
               You have uploaded {currentFilesCount} of {maxQuota} documents
-              included in your <strong>{isSubscribed ? "PRO" : "Free"}</strong>{" "}
-              plan.
-              {!isSubscribed &&
-                " Upgrade to PRO to unlock 50 documents, 16MB file size, and higher-quality AI responses."}
+              included in your <strong>{planName}</strong> plan.
+              {!isSubscribed && upgradePlan
+                ? ` Upgrade to ${upgradePlan.name} to unlock ${upgradePlan.quota} documents, ${upgradePlan.pagesPerPdf} pages per file, and ${upgradePlan.maxFileSizeMB}MB uploads.`
+                : !isSubscribed
+                  ? " Please upgrade your plan to unlock higher limits."
+                  : ""}
             </p>
             <div className="flex gap-3 w-full sm:w-auto">
               {!isSubscribed ? (
@@ -338,7 +353,8 @@ function UploadButton({
                   }}
                   className="w-full sm:w-auto"
                 >
-                  View Pro Plan <ArrowRight className="ml-1.5 h-4 w-4" />
+                  View {upgradePlan?.name || "Pro"} Plan{" "}
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Button>
               ) : (
                 <Button
@@ -354,6 +370,9 @@ function UploadButton({
         ) : (
           <UploadDropZone
             isSubscribed={isSubscribed}
+            maxFileSizeMB={maxFileSizeMB}
+            planName={planName}
+            upgradePlan={upgradePlan}
             closeDialog={() => setIsOpen(false)}
           />
         )}

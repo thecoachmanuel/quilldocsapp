@@ -6,14 +6,24 @@ import { pinecone, isPineconeConfigured } from "@/lib/pinecone";
 import { OpenAIEmbeddings } from "langchain/embeddings/openai";
 import { PineconeStore } from "langchain/vectorstores/pinecone";
 import {
-  extractPdfText,
-  getSmartContext,
+  buildStructuredDocumentContext,
   createCompletionWithFallback,
   isAiConfigured,
 } from "@/lib/ai";
 import { parseDocument } from "@/lib/document-parser";
-import { NextRequest, NextResponse } from "next/server";
+import {
+  isHolisticMultiDocQuery,
+  resolveMultiDocumentIntent,
+} from "@/lib/multi-doc";
+import { NextRequest } from "next/server";
 import { OpenAIStream, StreamingTextResponse } from "ai";
+
+interface PerDocContextResult {
+  file: any;
+  context: string;
+  totalPages: number | null;
+  unitLabel: "Page" | "Slide";
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,24 +43,31 @@ export async function POST(req: NextRequest) {
     const { fileId, message, fileIds: explicitFileIds } =
       SendMessageValidator.parse(body);
 
+    if (!message.trim()) {
+      return new Response("Message cannot be empty", { status: 400 });
+    }
+
     const isMultiSession = fileId.startsWith("multi_");
 
-    // Retrieve the user's files (ownership check for every participating document)
+    // Retrieve all user files ordered newest-first for ownership checks and multi-doc resolution
     const allUserFiles = await db.file.findMany({
       where: {
         userId,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     });
 
     let activeFiles: any[] = [];
     if (explicitFileIds && explicitFileIds.length > 0) {
-      // Preferred: client sends the exact list of participating file IDs
-      activeFiles = allUserFiles.filter((f: any) =>
-        explicitFileIds.includes(f.id)
-      );
+      // Preserve explicit ordering from client while verifying ownership
+      const fileById = new Map(allUserFiles.map((f: any) => [f.id, f]));
+      activeFiles = explicitFileIds
+        .map((id) => fileById.get(id))
+        .filter(Boolean);
     } else if (isMultiSession) {
-      // Fallback: file IDs may themselves contain "_" (e.g. file_123_abc),
-      // so match each owned file ID against the session string instead of splitting it.
+      // File IDs may themselves contain "_", so match each owned ID with delimiter guards
       const sessionBody = `_${fileId.slice("multi_".length)}_`;
       activeFiles = allUserFiles.filter((f: any) =>
         sessionBody.includes(`_${f.id}_`)
@@ -59,18 +76,55 @@ export async function POST(req: NextRequest) {
       activeFiles = allUserFiles.filter((f: any) => f.id === fileId);
     }
 
-    console.log(
-      `[message/route] Query for fileId: ${fileId} (${
-        activeFiles.length
-      } files), message: "${message}" (Plan: ${isPro ? "Pro" : "Free"})`
-    );
-
     if (activeFiles.length === 0) {
       console.log(`[message/route] Files not found for: ${fileId}`);
       return new Response("Files not found", { status: 404 });
     }
 
+    // Retrieve the most recent conversation history BEFORE saving the new message
+    // (avoids duplicating the current prompt and preserves newest turns)
+    const rawRecentMessages = await db.message.findMany({
+      where: {
+        fileId,
+        userId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: isPro ? 10 : 6,
+    });
+    const recentHistory = [...rawRecentMessages].reverse();
+
+    // Auto-detect when a user asks to chat across multiple documents from a single-doc chat
+    let autoMultiDocInfo: {
+      isAutoMultiDoc: boolean;
+      reason: string;
+    } = { isAutoMultiDoc: false, reason: "single" };
+
+    if (!isMultiSession && activeFiles.length === 1) {
+      const resolution = resolveMultiDocumentIntent({
+        message,
+        prevMessages: recentHistory,
+        primaryFile: activeFiles[0],
+        allUserFiles,
+        maxAutoFiles: isPro ? 6 : 4,
+      });
+
+      if (resolution.isAutoMultiDoc) {
+        activeFiles = resolution.activeFiles;
+        autoMultiDocInfo = {
+          isAutoMultiDoc: true,
+          reason: resolution.reason,
+        };
+      }
+    }
+
     const isMultiDoc = activeFiles.length > 1;
+    const holisticQuery = isHolisticMultiDocQuery(message);
+
+    console.log(
+      `[message/route] Query for fileId: ${fileId} (${activeFiles.length} active files, autoMulti=${autoMultiDocInfo.isAutoMultiDoc}:${autoMultiDocInfo.reason}, holistic=${holisticQuery}, Plan: ${isPro ? "Pro" : "Free"})`
+    );
 
     // 1. Save user message to database
     await db.message.create({
@@ -82,35 +136,32 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Inspect document to obtain true total page/slide count for single file mode
-    let totalDocPages: number | null = null;
-    let unitLabel = "Page";
+    // 2. Hybrid Per-Document Retrieval:
+    // Every participating document is guaranteed structured context even if Pinecone has
+    // partial or empty vectors for some files or the query is holistic ("compare/summarize").
+    const totalContextBudget = isPro ? 72000 : 28000;
+    const maxCharsPerDoc = Math.max(
+      4500,
+      Math.floor(totalContextBudget / activeFiles.length)
+    );
+    const maxVectorMatchesPerDoc = isMultiDoc
+      ? Math.max(3, Math.floor((isPro ? 18 : 10) / activeFiles.length))
+      : isPro
+      ? 8
+      : 5;
 
-    if (!isMultiDoc) {
-      const parsedDoc = await parseDocument(activeFiles[0].url).catch(
-        () => null
-      );
-      totalDocPages =
-        parsedDoc?.totalPages ||
-        parsedDoc?.totalSlides ||
-        (parsedDoc?.pages ? parsedDoc.pages.length : null) ||
-        (parsedDoc?.slides ? parsedDoc.slides.length : null);
-      unitLabel = parsedDoc?.fileType === "pptx" ? "Slide" : "Page";
-    }
-
-    // 2. Vector search in Pinecone with fallback to smart context extraction
-    let context = "";
-    let fullDocumentText = "";
+    let embeddings: OpenAIEmbeddings | null = null;
+    let pineconeIndex: any = null;
 
     if (isPineconeConfigured) {
-      try {
-        const apiKey =
-          process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-        const isUsingOpenRouter =
-          !process.env.OPENAI_API_KEY && Boolean(process.env.OPENROUTER_API_KEY);
+      const apiKey =
+        process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
+      const isUsingOpenRouter =
+        !process.env.OPENAI_API_KEY && Boolean(process.env.OPENROUTER_API_KEY);
 
-        if (apiKey) {
-          const embeddings = new OpenAIEmbeddings(
+      if (apiKey) {
+        try {
+          embeddings = new OpenAIEmbeddings(
             {
               openAIApiKey: apiKey,
               modelName: isUsingOpenRouter
@@ -118,131 +169,154 @@ export async function POST(req: NextRequest) {
                 : "text-embedding-ada-002",
             },
             isUsingOpenRouter
-              ? {
-                  basePath: "https://openrouter.ai/api/v1",
-                }
+              ? { basePath: "https://openrouter.ai/api/v1" }
               : undefined
           );
-
-          const pineconeIndex = pinecone.Index("quill");
-          const maxPerDoc = isMultiDoc
-            ? Math.max(
-                2,
-                Math.floor((isPro ? 12 : 6) / activeFiles.length)
-              )
-            : isPro
-            ? 8
-            : 4;
-
-          const docSearches = await Promise.all(
-            activeFiles.map(async (docFile: any) => {
-              try {
-                const pineconeStore =
-                  await PineconeStore.fromExistingIndex(embeddings, {
-                    pineconeIndex,
-                    namespace: docFile.id,
-                  });
-                const matches = await pineconeStore.similaritySearch(
-                  message,
-                  maxPerDoc
-                );
-                return matches.map((m) => ({
-                  pageContent: m.pageContent,
-                  metadata: {
-                    ...(m.metadata as Record<string, any>),
-                    fileName: docFile.name,
-                    fileId: docFile.id,
-                  } as Record<string, any>,
-                }));
-              } catch (err) {
-                console.warn(
-                  `[message/route] Search failed for namespace ${docFile.id}:`,
-                  err
-                );
-                return [];
-              }
-            })
+          pineconeIndex = pinecone.Index("quill");
+        } catch (embedInitErr) {
+          console.warn(
+            "[message/route] Embeddings init warning, using document extraction:",
+            embedInitErr
           );
-
-          const allMatches = docSearches.flat();
-          if (allMatches.length > 0) {
-            context = allMatches
-              .map((r) => {
-                const docName = r.metadata?.fileName || "Document";
-                let pageNum = r.metadata?.pageNumber;
-                if (
-                  !isMultiDoc &&
-                  pageNum &&
-                  totalDocPages &&
-                  pageNum > totalDocPages
-                ) {
-                  pageNum = totalDocPages;
-                }
-                const unit = r.metadata?.type || "Page";
-                const prefix = isMultiDoc
-                  ? pageNum
-                    ? `[Source: ${docName} • ${unit} ${pageNum}]`
-                    : `[Source: ${docName}]`
-                  : pageNum
-                  ? `[${unit} ${pageNum}]`
-                  : "";
-                return prefix ? `${prefix}\n${r.pageContent}` : r.pageContent;
-              })
-              .join("\n\n---\n\n");
-            console.log(
-              `[message/route] Retrieved ${allMatches.length} Pinecone vector matches across ${activeFiles.length} files`
-            );
-          }
         }
-      } catch (vectorErr) {
-        console.warn(
-          "[message/route] Pinecone vector search fallback:",
-          vectorErr
-        );
       }
     }
 
-    // Fallback: If vector search had no matches (or Pinecone wasn't populated yet), use document text extraction
-    if (!context) {
-      console.log(
-        `[message/route] Fallback to document text extraction across ${activeFiles.length} files`
-      );
-      const maxCharsPerFile = Math.floor(
-        (isPro ? 60000 : 20000) / activeFiles.length
-      );
-      const textParts = await Promise.all(
-        activeFiles.map(async (f: any) => {
-          const docText = await extractPdfText(f.url);
-          const smartCtx = getSmartContext(docText, message, maxCharsPerFile);
-          return isMultiDoc
-            ? `=== DOCUMENT: ${f.name} ===\n${smartCtx}`
-            : smartCtx;
-        })
-      );
-      context = textParts.join("\n\n---\n\n");
-    }
-    console.log(`[message/route] Active context characters: ${context.length}`);
+    const perDocResults: PerDocContextResult[] = await Promise.all(
+      activeFiles.map(async (docFile: any) => {
+        const parsedMeta = await parseDocument(docFile.url).catch(() => null);
+        const totalPages =
+          parsedMeta?.totalPages ||
+          parsedMeta?.totalSlides ||
+          (parsedMeta?.pages ? parsedMeta.pages.length : null) ||
+          (parsedMeta?.slides ? parsedMeta.slides.length : null);
+        const unitLabel: "Page" | "Slide" =
+          parsedMeta?.fileType === "pptx" ? "Slide" : "Page";
 
-    // 3. Retrieve conversation history
-    const prevMessages = await db.message.findMany({
-      where: {
-        fileId,
-      },
-      orderBy: {
-        createdAt: "asc",
-      },
-      take: isPro ? 10 : 6,
-    });
+        let vectorChunks: string[] = [];
 
-    const formattedPrevMessages = prevMessages.map((msg: any) => ({
+        if (embeddings && pineconeIndex) {
+          try {
+            const pineconeStore = await PineconeStore.fromExistingIndex(
+              embeddings,
+              {
+                pineconeIndex,
+                namespace: docFile.id,
+              }
+            );
+            const matches = await pineconeStore.similaritySearch(
+              message,
+              maxVectorMatchesPerDoc
+            );
+
+            vectorChunks = matches
+              .filter((m) => m.pageContent && m.pageContent.trim().length > 0)
+              .map((m) => {
+                let pageNum = Number(m.metadata?.pageNumber) || null;
+                if (pageNum && totalPages && pageNum > totalPages) {
+                  pageNum = totalPages;
+                }
+                const unit = m.metadata?.type || unitLabel;
+                const tag = isMultiDoc
+                  ? pageNum
+                    ? `[Source: ${docFile.name} • ${unit} ${pageNum}]`
+                    : `[Source: ${docFile.name}]`
+                  : pageNum
+                  ? `[${unit} ${pageNum}]`
+                  : "";
+                return tag ? `${tag}\n${m.pageContent}` : m.pageContent;
+              });
+          } catch (vecErr) {
+            console.warn(
+              `[message/route] Vector search fallback for ${docFile.name} (${docFile.id}):`,
+              vecErr
+            );
+          }
+        }
+
+        const vectorText = vectorChunks.join("\n\n---\n\n");
+
+        // Use structured extraction whenever vector hits are missing, too short,
+        // or the user asked a holistic/comparative question requiring full coverage.
+        if (vectorChunks.length === 0 || holisticQuery || vectorText.length < 500) {
+          const structured = await buildStructuredDocumentContext({
+            fileUrl: docFile.url,
+            fileName: docFile.name,
+            query: message,
+            maxChars: maxCharsPerDoc,
+            isMultiDoc,
+            holistic: holisticQuery,
+          });
+
+          let combinedDocContext = structured.context;
+          if (
+            vectorChunks.length > 0 &&
+            structured.context.length < maxCharsPerDoc * 0.75
+          ) {
+            const remainingBudget = maxCharsPerDoc - structured.context.length - 40;
+            const extraVector = vectorChunks
+              .filter((chunk) => {
+                const snippet = chunk.split("\n")[1]?.slice(0, 80) || "";
+                return snippet && !structured.context.includes(snippet);
+              })
+              .join("\n\n---\n\n")
+              .slice(0, Math.max(0, remainingBudget));
+
+            if (extraVector.trim()) {
+              combinedDocContext = combinedDocContext
+                ? `${combinedDocContext}\n\n---\n\n${extraVector}`
+                : extraVector;
+            }
+          }
+
+          return {
+            file: docFile,
+            context:
+              combinedDocContext ||
+              vectorText ||
+              "No readable text could be extracted from this document.",
+            totalPages: totalPages ?? structured.totalPages,
+            unitLabel: parsedMeta ? unitLabel : structured.unitLabel,
+          };
+        }
+
+        return {
+          file: docFile,
+          context: vectorText,
+          totalPages,
+          unitLabel,
+        };
+      })
+    );
+
+    const context = isMultiDoc
+      ? perDocResults
+          .map((res, idx) => {
+            const countText = res.totalPages
+              ? ` (${res.totalPages} ${res.unitLabel.toLowerCase()}${
+                  res.totalPages === 1 ? "" : "s"
+                })`
+              : "";
+            return `=== DOCUMENT ${idx + 1} of ${perDocResults.length}: "${
+              res.file.name
+            }"${countText} ===\n${res.context}\n=== END DOCUMENT ${idx + 1} ===`;
+          })
+          .join("\n\n")
+      : perDocResults[0]?.context || "";
+
+    console.log(
+      `[message/route] Built context (${context.length} chars across ${perDocResults.length} docs)`
+    );
+
+    const formattedPrevMessages = recentHistory.map((msg: any) => ({
       role: msg.isUserMessage ? ("user" as const) : ("assistant" as const),
       content: msg.text,
     }));
 
-    // 4. If AI credentials are not configured, stream a helpful local response
+    // 3. Local preview fallback if AI credentials are missing
     if (!isAiConfigured) {
-      const preview = fullDocumentText
-        ? fullDocumentText.slice(0, 300).replace(/\s+/g, " ") + "..."
+      const preview = context
+        ? context.slice(0, 300).replace(/\s+/g, " ") + "..."
         : "Document loaded.";
 
       const devReply = `**[QuillDocs AI]** I received your question: *"${message}"*\n\nDocument text preview:\n> "${preview}"\n\nAI service is currently initializing. Please try again in a few moments.`;
@@ -266,43 +340,100 @@ export async function POST(req: NextRequest) {
       return new StreamingTextResponse(stream);
     }
 
-    // 5. OpenRouter streaming completion with automated model fallback
-    const docNamesList = activeFiles
-      .map((f: any, i: number) => `${i + 1}. "${f.name}"`)
-      .join(", ");
+    // 4. Build system prompt with complete document awareness & citation constraints
+    const docInventoryLines = perDocResults
+      .map((res, idx) => {
+        const pageInfo = res.totalPages
+          ? ` — ${res.totalPages} ${res.unitLabel.toLowerCase()}${
+              res.totalPages === 1 ? "" : "s"
+            }`
+          : "";
+        return `${idx + 1}. "${res.file.name}"${pageInfo}`;
+      })
+      .join("\n");
 
-    const pageConstraint =
-      !isMultiDoc && totalDocPages
-        ? `- Note: This document has exactly ${totalDocPages} ${unitLabel.toLowerCase()}${
-            totalDocPages === 1 ? "" : "s"
-          }. Never cite any ${unitLabel.toLowerCase()} number greater than ${totalDocPages}.`
+    const unloadedLibraryFiles = allUserFiles.filter(
+      (f: any) =>
+        f.uploadStatus !== "FAILED" &&
+        !activeFiles.some((active: any) => active.id === f.id)
+    );
+
+    const unloadedLibraryNote =
+      unloadedLibraryFiles.length > 0
+        ? `\nOther uploaded documents in user's library (NOT loaded in this context): ${unloadedLibraryFiles
+            .slice(0, 12)
+            .map((f: any) => `"${f.name}"`)
+            .join(", ")}.`
         : "";
 
+    const primaryResult = perDocResults[0];
+    const singlePageConstraint =
+      !isMultiDoc && primaryResult?.totalPages
+        ? `- Exact length: "${primaryResult.file.name}" has exactly ${
+            primaryResult.totalPages
+          } ${primaryResult.unitLabel.toLowerCase()}${
+            primaryResult.totalPages === 1 ? "" : "s"
+          }. Never cite any ${primaryResult.unitLabel.toLowerCase()} number greater than ${
+            primaryResult.totalPages
+          }.`
+        : "";
+
+    const autoMultiNote = autoMultiDocInfo.isAutoMultiDoc
+      ? `\n- Multi-Doc Auto-Activation: The user initiated this question from a single-document view, and you automatically brought in their relevant uploaded document(s) so you can answer seamlessly across all of them.`
+      : "";
+
     const systemPrompt = isMultiDoc
-      ? `You are Quill, an advanced expert AI research tutor operating in Multi-Document Synthesis mode (${
+      ? `You are Quill, an expert AI research assistant operating in Multi-Document Synthesis mode (${
           isPro ? "PRO Tier" : "Standard Tier"
         }).
-You are analyzing and synthesizing information across ${activeFiles.length} documents simultaneously:
-${docNamesList}
+You are analyzing ${perDocResults.length} participating documents simultaneously:
+${docInventoryLines}${unloadedLibraryNote}
 
-Your instructions:
-- Cross-Document Synthesis: Compare, cross-reference, and synthesize answers across all relevant documents. Highlight areas where the documents agree, contradict, or complement each other.
-- Precision Citations: Always cite the source document name and page/slide so the user can verify, e.g., [DocumentName.pdf • Page X] or [Presentation.pptx • Slide Y].
-- If a question only pertains to one of the documents, answer clearly while indicating which document contains the information.
+Your strict instructions:
+- Cross-Document Synthesis: Address EVERY relevant participating document when comparing, summarizing, contrasting, or synthesizing answers. Highlight agreements, contradictions, differences, and complementary insights clearly.
+- Attribution Accuracy: Keep facts cleanly attributed to the exact document they come from—never blend or misattribute details between documents.
+- Precision Clickable Citations: Always cite claims using the exact filename and page/slide number formatted as [ExactFileName.ext • Page X] or [ExactFileName.ext • Slide Y] (matching the headers in context). Never cite a page/slide number higher than a document's stated total.
+- Single-Source Questions in Multi-Doc Mode: If a question only appears in some of the documents, state clearly which document(s) contain the answer and which do not.
+- Library Awareness: If the user asks about another library file listed above that is NOT loaded, tell them its exact name and suggest clicking "Add Document" / asking directly by filename.${autoMultiNote}
 - Ground all facts strictly in the provided document contexts.`
       : isPro
       ? `You are Quill, an advanced expert AI document tutor operating in PRO High-Quality mode.
-Your goal is to provide exceptional, comprehensive, and deeply analytical insights from the provided document.
+Current Document: "${primaryResult?.file?.name || "Document"}"${
+          primaryResult?.totalPages
+            ? ` (${
+                primaryResult.totalPages
+              } ${primaryResult.unitLabel.toLowerCase()}${
+                primaryResult.totalPages === 1 ? "" : "s"
+              })`
+            : ""
+        }${unloadedLibraryNote}
+
+Your goal is to provide exceptional, comprehensive, and deeply analytical insights from the provided document:
 - Deliver thorough, structured explanations with key takeaways, deep technical context, and precise details.
-- Provide comprehensive study guides, chapter breakdowns, and high-difficulty exam preparation questions with in-depth rationales.
-- Formatting & Citations: Always format with clean, elegant Markdown. Include citations like [Page X] or [Slide Y] whenever available so the user can easily verify and jump to the source.
-${pageConstraint}
+- Formatting & Citations: Always format with clean Markdown. Include clickable citations like [${
+          primaryResult?.unitLabel || "Page"
+        } X] whenever available so the user can jump directly to the source.
+${singlePageConstraint}
+- Other Documents Awareness: Stay focused on the current document unless the user explicitly asks about another uploaded document. If they ask about an unloaded library document listed above, mention it by name and let them know they can ask directly by its name or click "Add Docs" to enter Multi-Doc Chat.
 - Ground all facts strictly in the document context.`
       : `You are Quill, an expert AI document assistant.
-Your goal is to help users understand their uploaded document.
-- Provide clear, direct, and concise answers to user questions based on the document.
-- Formatting & Citations: Use Markdown and cite references like [Page X] or [Slide Y] where identifiable.
-${pageConstraint}`;
+Current Document: "${primaryResult?.file?.name || "Document"}"${
+          primaryResult?.totalPages
+            ? ` (${
+                primaryResult.totalPages
+              } ${primaryResult.unitLabel.toLowerCase()}${
+                primaryResult.totalPages === 1 ? "" : "s"
+              })`
+            : ""
+        }${unloadedLibraryNote}
+
+Your goal is to help the user understand their uploaded document:
+- Provide clear, direct, and concise answers based strictly on the document context.
+- Formatting & Citations: Use Markdown and cite references like [${
+          primaryResult?.unitLabel || "Page"
+        } X] where identifiable.
+${singlePageConstraint}
+- Other Documents Awareness: If the user asks about an unloaded library document listed above, mention it by exact name and let them know they can reference it directly or tap "Add Docs" for Multi-Doc Chat.`;
 
     const messages = [
       {
@@ -319,11 +450,11 @@ ${pageConstraint}`;
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
-      max_tokens: isPro ? 3000 : 1200,
+      max_tokens: isPro ? 3200 : 1400,
     });
 
     console.log(
-      `[message/route] Generating answer with model: ${activeModel} (${
+      `[message/route] Generating answer with model: ${activeModel} (multiDoc=${isMultiDoc}, autoMulti=${autoMultiDocInfo.isAutoMultiDoc}, ${
         isPro ? "PRO Tier" : "Free Tier"
       })`
     );
@@ -341,7 +472,17 @@ ${pageConstraint}`;
       },
     });
 
-    return new StreamingTextResponse(stream);
+    const responseHeaders: Record<string, string> = {};
+    if (autoMultiDocInfo.isAutoMultiDoc) {
+      responseHeaders["X-Quill-Multi-Docs"] = activeFiles
+        .map((f: any) => f.id)
+        .join(",");
+      responseHeaders["X-Quill-Multi-Names"] = encodeURIComponent(
+        JSON.stringify(activeFiles.map((f: any) => f.name))
+      );
+    }
+
+    return new StreamingTextResponse(stream, { headers: responseHeaders });
   } catch (error: any) {
     console.error("[message/route] Error:", error);
     return new Response(

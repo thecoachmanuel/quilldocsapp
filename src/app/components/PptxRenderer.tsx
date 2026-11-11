@@ -83,19 +83,37 @@ export default function PptxRenderer({
     height: fullscreenContainerHeight,
     ref: fullscreenContainerRef,
   } = useResizeDetector();
+  const pendingJumpSlideRef = useRef<number | null>(null);
 
   // Listen for citation jump events from Quill AI Assistant chat
   useEffect(() => {
     const handleJump = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
-      if (detail && typeof detail.page === "number") {
-        const targetSlide = Math.min(Math.max(1, detail.page), totalSlides);
+      if (!detail || typeof detail.page !== "number") return;
+      if (detail.fileId && detail.fileId !== fileId) return;
+
+      if (!isLoading && slides.length > 0) {
+        const targetSlide = Math.min(Math.max(1, detail.page), slides.length);
         setCurrSlide(targetSlide);
+      } else {
+        pendingJumpSlideRef.current = detail.page;
       }
     };
     window.addEventListener("quill:jump-to-page", handleJump);
     return () => window.removeEventListener("quill:jump-to-page", handleJump);
-  }, [totalSlides]);
+  }, [isLoading, slides.length, fileId]);
+
+  // Apply deferred citation jump once presentation slides finish parsing
+  useEffect(() => {
+    if (!isLoading && slides.length > 0 && pendingJumpSlideRef.current !== null) {
+      const targetSlide = Math.min(
+        Math.max(1, pendingJumpSlideRef.current),
+        slides.length
+      );
+      pendingJumpSlideRef.current = null;
+      setCurrSlide(targetSlide);
+    }
+  }, [isLoading, slides.length]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
   useEffect(() => {

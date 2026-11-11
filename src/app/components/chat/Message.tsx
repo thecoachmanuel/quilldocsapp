@@ -24,23 +24,30 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
       }
     };
 
-    // Pre-process citations:
-    // 1. Multi-doc citations: [Doc.pdf • Page 3] or [Source: Doc.pdf • Page 3]
+    // Pre-process citations in a single pass so multi-doc links aren't nested:
+    // 1. Multi-doc citations: [Doc.pdf • Page 3], [Source: Doc.pdf, Slide 2]
     // 2. Single doc citations: [Page 3], [Slide 2]
     const formattedText =
       typeof message.text === "string" && !message.isUserMessage
-        ? message.text
-            .replace(
-              /\[(?:Source:\s*)?([^\]]+?\.(?:pdf|docx|doc|pptx|ppt))\s*•\s*(Page|Slide)\s*([0-9]+)\]/gi,
-              (m, doc, type, num) =>
-                `[${doc} • ${type} ${num}](#jump-doc-${encodeURIComponent(
-                  doc.trim()
-                )}-${type.toLowerCase()}-${num})`
-            )
-            .replace(
-              /(?:\[|\()?(Page|Slide)\s*([0-9]+)(?:\]|\))?(?:\(#jump-[^)]+\))?/gi,
-              (m, t, n) => `[${t} ${n}](#jump-${t.toLowerCase()}-${n})`
-            )
+        ? message.text.replace(
+            /(?:\[|\()(?:Source:\s*)?([^\]\)]+?\.(?:pdf|docx?|pptx?))\s*(?:•|\||-|–|,|:)\s*(Page|Slide)s?\s*([0-9]+)(?:\s*[-–]\s*[0-9]+)?(?:\]|\))|(?:\[|\()?(Page|Slide)s?\s*([0-9]+)(?:\]|\))?/gi,
+            (match, doc, mType, mNum, sType, sNum) => {
+              if (doc && mType && mNum) {
+                const cleanDoc = doc.trim();
+                const unit =
+                  mType.charAt(0).toUpperCase() + mType.slice(1).toLowerCase();
+                return `[${cleanDoc} • ${unit} ${mNum}](#jump-doc-${encodeURIComponent(
+                  cleanDoc
+                )}-${mType.toLowerCase()}-${mNum})`;
+              }
+              if (sType && sNum) {
+                const unit =
+                  sType.charAt(0).toUpperCase() + sType.slice(1).toLowerCase();
+                return `[${unit} ${sNum}](#jump-${sType.toLowerCase()}-${sNum})`;
+              }
+              return match;
+            }
+          )
         : message.text;
 
     return (

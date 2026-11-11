@@ -1,24 +1,54 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { trpc } from "@/app/_trpc/client";
 import ChatInput from "./ChatInput";
 import Messages from "./Messages";
-import { ChevronLeft, Loader2, XCircle } from "lucide-react";
+import { ChevronLeft, Loader2, XCircle, Layers } from "lucide-react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
-import { ChatContextProvider } from "./ChatContext";
+import { ChatContext, ChatContextProvider } from "./ChatContext";
 
 interface ChatWrapperProps {
   fileId: string;
   fileIds?: string[];
+  docNames?: string[];
   isExpanded?: boolean;
   planName?: string;
   pagesPerPdf?: number;
 }
 
+function AutoMultiDocBanner({ hasExplicitMulti }: { hasExplicitMulti: boolean }) {
+  const { autoMultiDocs } = useContext(ChatContext);
+  if (hasExplicitMulti || !autoMultiDocs || autoMultiDocs.ids.length <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="shrink-0 bg-blue-50/90 border-b border-blue-200 px-3 py-1.5 flex items-center justify-between gap-2 text-xs">
+      <div className="flex items-center gap-1.5 min-w-0 text-blue-900">
+        <Layers className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+        <span className="truncate">
+          Cross-referencing{" "}
+          <strong>{autoMultiDocs.ids.length} documents</strong>
+          {autoMultiDocs.names.length > 0
+            ? ` (${autoMultiDocs.names.join(", ")})`
+            : ""}
+        </span>
+      </div>
+      <Link
+        href={`/dashboard/multi?files=${autoMultiDocs.ids.join(",")}`}
+        className="shrink-0 font-semibold text-blue-700 hover:text-blue-800 hover:underline whitespace-nowrap"
+      >
+        Open Side-by-Side
+      </Link>
+    </div>
+  );
+}
+
 function ChatWrapper({
   fileId,
   fileIds,
+  docNames,
   isExpanded = false,
   planName = "Free",
   pagesPerPdf = 5,
@@ -116,8 +146,15 @@ function ChatWrapper({
       isExpanded={isExpanded}
     >
       <div className="relative h-full max-h-full bg-zinc-50 flex flex-col justify-between overflow-hidden">
+        <AutoMultiDocBanner
+          hasExplicitMulti={Boolean(fileIds && fileIds.length > 1)}
+        />
         <div className="flex-1 min-h-0 justify-between flex flex-col overflow-hidden">
-          <Messages fileId={fileId} isExpanded={isExpanded} />
+          <Messages
+            fileId={fileId}
+            isExpanded={isExpanded}
+            docNames={docNames}
+          />
         </div>
 
         <ChatInput isExpanded={isExpanded} />

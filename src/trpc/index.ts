@@ -420,11 +420,23 @@ export const appRouter = router({
           },
         });
         if (!file) throw new TRPCError({ code: "NOT_FOUND" });
+      } else {
+        const userFiles = await db.file.findMany({
+          where: { userId },
+        });
+        const sessionBody = `_${fileId.slice("multi_".length)}_`;
+        const ownsAny = userFiles.some((f: any) =>
+          sessionBody.includes(`_${f.id}_`)
+        );
+        if (!ownsAny && userFiles.length > 0) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
       }
       const messages = await db.message.findMany({
         take: limit + 1,
         where: {
           fileId,
+          userId,
         },
         orderBy: {
           createdAt: "desc",

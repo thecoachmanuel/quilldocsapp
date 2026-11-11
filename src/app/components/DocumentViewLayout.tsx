@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import DocumentRenderer from "./DocumentRenderer";
 import ChatWrapper from "./chat/ChatWrapper";
 import {
@@ -14,6 +14,7 @@ import {
   Plus,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ interface DocumentViewLayoutProps {
   fileId: string;
   url: string;
   fileName?: string;
+  userFiles?: Array<{ id: string; name: string }>;
   planName?: string;
   pagesPerPdf?: number;
 }
@@ -29,9 +31,11 @@ export default function DocumentViewLayout({
   fileId,
   url,
   fileName,
+  userFiles = [],
   planName = "Free",
   pagesPerPdf = 5,
 }: DocumentViewLayoutProps) {
+  const router = useRouter();
   const [isMobileChatOpen, setIsMobileChatOpen] = useState<boolean>(false);
   const [isChatExpanded, setIsChatExpanded] = useState<boolean>(false);
   const [isDesktopChatHidden, setIsDesktopChatHidden] =
@@ -39,6 +43,49 @@ export default function DocumentViewLayout({
 
   const { isMobile, isKeyboardVisible, viewportHeight, offsetTop } =
     useMobileViewport();
+
+  // Handle cross-document citation clicks if the AI auto-referenced other documents
+  useEffect(() => {
+    const handleJumpToDoc = (e: any) => {
+      const { docName, page, type } = e.detail || {};
+      if (!docName) return;
+
+      const lowerDoc = docName.toLowerCase();
+      if (
+        fileName &&
+        (fileName.toLowerCase() === lowerDoc ||
+          fileName.toLowerCase().includes(lowerDoc))
+      ) {
+        if (page) {
+          window.dispatchEvent(
+            new CustomEvent("quill:jump-to-page", {
+              detail: { fileId, page, type: type || "page" },
+            })
+          );
+        }
+        return;
+      }
+
+      const target =
+        userFiles.find((f) => f.name.toLowerCase() === lowerDoc) ||
+        userFiles.find(
+          (f) =>
+            f.name.toLowerCase().includes(lowerDoc) ||
+            lowerDoc.includes(f.name.toLowerCase())
+        );
+
+      if (target && target.id !== fileId) {
+        const pageParam = page ? `&page=${page}` : "";
+        router.push(
+          `/dashboard/multi?files=${fileId},${target.id}&focus=${target.id}${pageParam}`
+        );
+      }
+    };
+
+    window.addEventListener("quill:jump-to-doc", handleJumpToDoc);
+    return () =>
+      window.removeEventListener("quill:jump-to-doc", handleJumpToDoc);
+  }, [fileId, fileName, userFiles, router]);
 
   // On mobile when typing with virtual keypad, pin chat directly to visual viewport
   const mobileKeyboardStyle: React.CSSProperties | undefined =
@@ -167,7 +214,7 @@ export default function DocumentViewLayout({
 
               <Link
                 href={`/dashboard/multi?files=${fileId}`}
-                className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100/80 transition ml-1 shrink-0"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100/80 transition ml-0.5 sm:ml-1 shrink-0"
                 title="Chat with multiple documents simultaneously"
               >
                 <Plus className="h-3 w-3" />

@@ -43,6 +43,8 @@ export interface DocumentInfo {
 interface MultiDocumentViewLayoutProps {
   initialFiles: DocumentInfo[];
   allUserFiles: DocumentInfo[];
+  initialFocusId?: string;
+  initialPage?: number;
   planName?: string;
   pagesPerPdf?: number;
 }
@@ -50,6 +52,8 @@ interface MultiDocumentViewLayoutProps {
 export default function MultiDocumentViewLayout({
   initialFiles,
   allUserFiles,
+  initialFocusId,
+  initialPage,
   planName = "Free",
   pagesPerPdf = 5,
 }: MultiDocumentViewLayoutProps) {
@@ -61,7 +65,9 @@ export default function MultiDocumentViewLayout({
 
   // The document currently visible in the left preview pane
   const [activeFileId, setActiveFileId] = useState<string>(
-    initialFiles[0]?.id || ""
+    (initialFocusId && initialFiles.some((f) => f.id === initialFocusId)
+      ? initialFocusId
+      : initialFiles[0]?.id) || ""
   );
 
   // Manage Documents Modal State
@@ -94,6 +100,36 @@ export default function MultiDocumentViewLayout({
         }
       : undefined;
 
+  // Keep local state synchronized if URL query parameters navigate between file sets
+  const initialIdsKey = initialFiles.map((f) => f.id).join(",");
+  useEffect(() => {
+    setSelectedFiles(initialFiles);
+    setTempSelectedIds(initialFiles.map((f) => f.id));
+    if (initialFocusId && initialFiles.some((f) => f.id === initialFocusId)) {
+      setActiveFileId(initialFocusId);
+    } else if (!initialFiles.some((f) => f.id === activeFileId)) {
+      setActiveFileId(initialFiles[0]?.id || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialIdsKey, initialFocusId]);
+
+  // Apply initial citation jump if navigated with ?focus=...&page=...
+  useEffect(() => {
+    if (initialPage && initialPage > 0) {
+      const targetId = initialFocusId || activeFileId;
+      const fire = () =>
+        window.dispatchEvent(
+          new CustomEvent("quill:jump-to-page", {
+            detail: { fileId: targetId, page: initialPage, type: "page" },
+          })
+        );
+      fire();
+      const timer = setTimeout(fire, 300);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFocusId, initialPage]);
+
   // Sort selected IDs deterministically for stable session key & message history
   const multiSessionId = useMemo(() => {
     const sorted = [...selectedFiles.map((f) => f.id)].sort();
@@ -112,23 +148,47 @@ export default function MultiDocumentViewLayout({
       const { docName, page, type } = e.detail || {};
       if (!docName) return;
 
-      const target = selectedFiles.find(
-        (f) =>
-          f.name.toLowerCase() === docName.toLowerCase() ||
-          f.name.toLowerCase().includes(docName.toLowerCase()) ||
-          docName.toLowerCase().includes(f.name.toLowerCase())
-      );
+      const lowerDoc = docName.toLowerCase();
+      const findMatch = (list: DocumentInfo[]) =>
+        list.find((f) => f.name.toLowerCase() === lowerDoc) ||
+        list.find(
+          (f) =>
+            f.name.toLowerCase().includes(lowerDoc) ||
+            lowerDoc.includes(f.name.toLowerCase())
+        );
+
+      let target = findMatch(selectedFiles);
+      if (!target) {
+        const fromLibrary = findMatch(allUserFiles);
+        if (fromLibrary) {
+          target = fromLibrary;
+          setSelectedFiles((prev) =>
+            prev.some((f) => f.id === fromLibrary.id)
+              ? prev
+              : [...prev, fromLibrary]
+          );
+        }
+      }
 
       if (target) {
-        setActiveFileId(target.id);
+        const targetId = target.id;
+        setActiveFileId(targetId);
+
+        if (isMobile && !isKeyboardVisible) {
+          setIsChatExpanded(false);
+          setIsMobileChatOpen(false);
+        }
+
         if (page) {
-          setTimeout(() => {
+          const dispatchJump = () =>
             window.dispatchEvent(
               new CustomEvent("quill:jump-to-page", {
-                detail: { page, type: type || "page" },
+                detail: { fileId: targetId, page, type: type || "page" },
               })
             );
-          }, 200);
+          dispatchJump();
+          setTimeout(dispatchJump, 250);
+          setTimeout(dispatchJump, 650);
         }
       }
     };
@@ -136,7 +196,7 @@ export default function MultiDocumentViewLayout({
     window.addEventListener("quill:jump-to-doc", handleJumpToDoc);
     return () =>
       window.removeEventListener("quill:jump-to-doc", handleJumpToDoc);
-  }, [selectedFiles]);
+  }, [selectedFiles, allUserFiles, isMobile, isKeyboardVisible]);
 
   const openManageModal = () => {
     setTempSelectedIds(selectedFiles.map((f) => f.id));
@@ -425,6 +485,7 @@ export default function MultiDocumentViewLayout({
               key={multiSessionId}
               fileId={multiSessionId}
               fileIds={selectedFiles.map((f) => f.id)}
+              docNames={selectedFiles.map((f) => f.name)}
               isExpanded={isChatExpanded}
               planName={planName}
               pagesPerPdf={pagesPerPdf}

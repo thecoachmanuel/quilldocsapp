@@ -12,6 +12,8 @@ export const revalidate = 0;
 interface PageProps {
   searchParams: {
     files?: string;
+    focus?: string;
+    page?: string;
   };
 }
 
@@ -53,6 +55,10 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
     initialIds = requestedParam.split(",").map((s) => s.trim()).filter(Boolean);
   }
 
+  if (searchParams?.focus && !initialIds.includes(searchParams.focus)) {
+    initialIds.push(searchParams.focus);
+  }
+
   // Filter valid files owned by user
   let initialFiles = allUserFiles.filter((f: any) =>
     initialIds.includes(f.id)
@@ -62,6 +68,12 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
   if (initialFiles.length === 0) {
     initialFiles = allUserFiles.slice(0, Math.min(2, allUserFiles.length));
   }
+
+  const parsedPage = searchParams?.page
+    ? parseInt(searchParams.page, 10)
+    : undefined;
+  const initialPage =
+    parsedPage && !isNaN(parsedPage) && parsedPage > 0 ? parsedPage : undefined;
 
   const sanitizedInitial: DocumentInfo[] = initialFiles.map((f: any) => ({
     id: f.id,
@@ -81,6 +93,8 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
     <MultiDocumentViewLayout
       initialFiles={sanitizedInitial}
       allUserFiles={sanitizedAll}
+      initialFocusId={searchParams?.focus}
+      initialPage={initialPage}
       planName={subscriptionPlan.name}
       pagesPerPdf={subscriptionPlan.pagesPerPdf}
     />

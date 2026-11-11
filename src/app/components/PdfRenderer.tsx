@@ -105,20 +105,39 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const isLoading = renderedScale !== scale;
+  const pendingJumpPageRef = useRef<number | null>(null);
 
   // Listen for citation jump events from Quill AI Assistant chat
   useEffect(() => {
     const handleJump = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
-      if (detail && typeof detail.page === "number" && numPages) {
+      if (!detail || typeof detail.page !== "number") return;
+      if (detail.fileId && detail.fileId !== fileId) return;
+
+      if (numPages) {
         const targetPage = Math.min(Math.max(1, detail.page), numPages);
         setCurrPage(targetPage);
         setValue("page", String(targetPage));
+      } else {
+        pendingJumpPageRef.current = detail.page;
       }
     };
     window.addEventListener("quill:jump-to-page", handleJump);
     return () => window.removeEventListener("quill:jump-to-page", handleJump);
-  }, [numPages]);
+  }, [numPages, fileId, setValue]);
+
+  // Apply deferred citation jump once PDF page count finishes loading
+  useEffect(() => {
+    if (numPages && pendingJumpPageRef.current !== null) {
+      const targetPage = Math.min(
+        Math.max(1, pendingJumpPageRef.current),
+        numPages
+      );
+      pendingJumpPageRef.current = null;
+      setCurrPage(targetPage);
+      setValue("page", String(targetPage));
+    }
+  }, [numPages, setValue]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
   useEffect(() => {

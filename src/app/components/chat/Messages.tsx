@@ -1,6 +1,6 @@
 import { trpc } from "@/app/_trpc/client";
 import { INFINITE_QUERY_LIMIT } from "@/config/infinite-query";
-import { Loader2, MessageSquare } from "lucide-react";
+import { Loader2, MessageSquare, Layers } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 import Message from "./Message";
 import { useContext, useEffect, useRef } from "react";
@@ -11,9 +11,10 @@ import { cn } from "@/lib/utils";
 interface MessagesProps {
   fileId: string;
   isExpanded?: boolean;
+  docNames?: string[];
 }
 
-function Messages({ fileId, isExpanded = false }: MessagesProps) {
+function Messages({ fileId, isExpanded = false, docNames }: MessagesProps) {
   const { isLoading: isAiThinking, isExpanded: contextExpanded } =
     useContext(ChatContext);
   const effectiveExpanded = isExpanded || contextExpanded || false;
@@ -104,12 +105,38 @@ function Messages({ fileId, isExpanded = false }: MessagesProps) {
             <Skeleton className="h-16" />
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-2 py-12">
-            <MessageSquare className="h-8 w-8 text-blue-500" />
-            <h3 className="font-semibold text-xl">You&apos;re all set!</h3>
-            <p className="text-zinc-500 text-sm">
-              Ask your first question to get started.
-            </p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 py-12 px-4 text-center">
+            {docNames && docNames.length > 1 ? (
+              <>
+                <Layers className="h-8 w-8 text-blue-600" />
+                <h3 className="font-semibold text-lg text-zinc-900">
+                  Multi-Doc Synthesis Ready
+                </h3>
+                <p className="text-zinc-500 text-sm max-w-xs">
+                  Ask to compare, summarize, or cross-reference across{" "}
+                  {docNames.length} documents.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 max-w-sm">
+                  {docNames.map((name, idx) => (
+                    <span
+                      key={`${name}-${idx}`}
+                      className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white text-zinc-700 border border-zinc-200 truncate max-w-[170px]"
+                      title={name}
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <MessageSquare className="h-8 w-8 text-blue-500" />
+                <h3 className="font-semibold text-xl">You&apos;re all set!</h3>
+                <p className="text-zinc-500 text-sm">
+                  Ask your first question to get started.
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>

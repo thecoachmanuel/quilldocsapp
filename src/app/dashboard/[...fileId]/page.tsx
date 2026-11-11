@@ -40,11 +40,19 @@ async function Page({ params }: PageProps) {
   }
 
   await ensureDbUser(user);
-  const [file, subscriptionPlan] = await Promise.all([
+  const [file, allUserFiles, subscriptionPlan] = await Promise.all([
     db.file.findFirst({
       where: {
         id: fileId,
         userId: user.id,
+      },
+    }),
+    db.file.findMany({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        createdAt: "desc",
       },
     }),
     getUserSubscriptionPlan(),
@@ -52,11 +60,17 @@ async function Page({ params }: PageProps) {
 
   if (!file) notFound();
 
+  const sanitizedUserFiles = allUserFiles.map((f: any) => ({
+    id: f.id,
+    name: f.name,
+  }));
+
   return (
     <DocumentViewLayout
       fileId={fileId}
       url={file.url}
       fileName={file.name}
+      userFiles={sanitizedUserFiles}
       planName={subscriptionPlan.name}
       pagesPerPdf={subscriptionPlan.pagesPerPdf}
     />

@@ -26,7 +26,7 @@ function AutoMultiDocBanner({ hasExplicitMulti }: { hasExplicitMulti: boolean })
   }
 
   return (
-    <div className="shrink-0 bg-blue-50/90 border-b border-blue-200 px-3 py-1.5 flex items-center justify-between gap-2 text-xs">
+    <div className="shrink-0 w-full max-w-full overflow-hidden bg-blue-50/90 border-b border-blue-200 px-3 py-1.5 flex items-center justify-between gap-2 text-xs">
       <div className="flex items-center gap-1.5 min-w-0 text-blue-900">
         <Layers className="h-3.5 w-3.5 text-blue-600 shrink-0" />
         <span className="truncate">
@@ -81,7 +81,7 @@ function ChatWrapper({
 
   if (isLoading && !forceReady)
     return (
-      <div className="relative h-full max-h-full bg-zinc-50 flex flex-col justify-between overflow-hidden">
+      <div className="relative h-full max-h-full w-full max-w-full min-w-0 bg-zinc-50 flex flex-col justify-between overflow-hidden">
         <div className="flex-1 min-h-0 flex justify-center items-center flex-col p-4">
           <div className="flex flex-col items-center gap-2">
             <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
@@ -97,7 +97,7 @@ function ChatWrapper({
 
   if (data?.status === "PROCESSING" && !forceReady)
     return (
-      <div className="relative h-full max-h-full bg-zinc-50 flex flex-col justify-between overflow-hidden">
+      <div className="relative h-full max-h-full w-full max-w-full min-w-0 bg-zinc-50 flex flex-col justify-between overflow-hidden">
         <div className="flex-1 min-h-0 flex justify-center items-center flex-col p-4 text-center">
           <div className="flex flex-col items-center gap-2">
             <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
@@ -118,7 +118,7 @@ function ChatWrapper({
 
   if (data?.status === "FAILED")
     return (
-      <div className="relative h-full max-h-full bg-zinc-50 flex flex-col justify-between overflow-hidden">
+      <div className="relative h-full max-h-full w-full max-w-full min-w-0 bg-zinc-50 flex flex-col justify-between overflow-hidden">
         <div className="flex-1 min-h-0 flex justify-center items-center flex-col p-4 text-center">
           <div className="flex flex-col items-center gap-2">
             <XCircle className="h-8 w-8 text-red-500 " />
@@ -148,11 +148,11 @@ function ChatWrapper({
       fileIds={fileIds}
       isExpanded={isExpanded}
     >
-      <div className="relative h-full max-h-full bg-zinc-50 flex flex-col justify-between overflow-hidden">
+      <div className="relative h-full max-h-full w-full max-w-full min-w-0 bg-zinc-50 flex flex-col justify-between overflow-hidden">
         <AutoMultiDocBanner
           hasExplicitMulti={Boolean(fileIds && fileIds.length > 1)}
         />
-        <div className="flex-1 min-h-0 justify-between flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 min-w-0 w-full max-w-full justify-between flex flex-col overflow-hidden">
           <Messages
             fileId={fileId}
             isExpanded={isExpanded}

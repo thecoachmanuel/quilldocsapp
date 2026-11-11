@@ -80,13 +80,13 @@ function Messages({
   }, [entry, fetchNextPage]);
 
   return (
-    <div className="flex flex-1 min-h-0 h-full border-zinc-200 flex-col-reverse overflow-y-auto scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch">
+    <div className="flex flex-1 min-h-0 min-w-0 w-full max-w-full h-full border-zinc-200 flex-col-reverse overflow-y-auto overflow-x-hidden scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch">
       <div
         className={cn(
-          "w-full flex flex-col-reverse gap-4 transition-all duration-300",
+          "w-full max-w-full min-w-0 flex flex-col-reverse gap-4 transition-all duration-300",
           effectiveExpanded
-            ? "max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto px-4 sm:px-6 py-4"
-            : "px-3 py-3"
+            ? "sm:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto px-3 sm:px-6 py-4"
+            : "px-2.5 sm:px-3 py-3"
         )}
       >
         {combinedMessages && combinedMessages.length > 0 ? (

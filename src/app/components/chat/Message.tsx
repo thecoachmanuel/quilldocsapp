@@ -76,9 +76,9 @@ function formatMessageCitations(
     propSources.length >= footerSources.length
       ? propSources
       : footerSources.map((fs, i) => ({
-          id: propSources[i]?.id || fs.id || "",
-          name: propSources[i]?.name || fs.name,
-        }));
+        id: propSources[i]?.id || fs.id || "",
+        name: propSources[i]?.name || fs.name,
+      }));
 
   const citedSet = new Set<number>();
 
@@ -214,17 +214,17 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
       typeof message.text === "string" && !message.isUserMessage
         ? formatMessageCitations(message.text, docSources)
         : {
-            formattedText: message.text,
-            effectiveSources: docSources,
-            citedIndices: [],
-          };
+          formattedText: message.text,
+          effectiveSources: docSources,
+          citedIndices: [],
+        };
 
     const { formattedText, effectiveSources, citedIndices } = parsed;
 
     return (
       <div
         ref={ref}
-        className={cn("flex items-end w-full", {
+        className={cn("flex items-end gap-2 w-full max-w-full min-w-0", {
           "justify-end": message.isUserMessage,
         })}
       >
@@ -247,25 +247,25 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
 
         <div
           className={cn(
-            "flex flex-col space-y-2 text-base mx-2 group relative transition-all duration-300",
+            "flex flex-col space-y-2 text-base min-w-0 group relative transition-all duration-300",
             message.isUserMessage
               ? cn(
-                  "order-1 items-end",
-                  isExpanded
-                    ? "max-w-[90%] sm:max-w-[85%] lg:max-w-4xl xl:max-w-5xl"
-                    : "max-w-[85%] sm:max-w-[78%] lg:max-w-2xl"
-                )
+                "order-1 items-end",
+                isExpanded
+                  ? "max-w-[calc(100%-2.25rem)] sm:max-w-[85%] lg:max-w-4xl xl:max-w-5xl"
+                  : "max-w-[calc(100%-2.25rem)] sm:max-w-[78%] lg:max-w-2xl"
+              )
               : cn(
-                  "order-2 items-start",
-                  isExpanded
-                    ? "max-w-[96%] sm:max-w-[92%] lg:max-w-5xl xl:max-w-6xl"
-                    : "max-w-[92%] sm:max-w-[88%] lg:max-w-[88%] xl:max-w-[86%]"
-                )
+                "order-2 items-start",
+                isExpanded
+                  ? "max-w-[calc(100%-2.25rem)] sm:max-w-[92%] lg:max-w-5xl xl:max-w-6xl"
+                  : "max-w-[calc(100%-2.25rem)] sm:max-w-[88%] lg:max-w-[88%] xl:max-w-[86%]"
+              )
           )}
         >
           <div
             className={cn(
-              "px-4 py-2.5 rounded-lg inline-block w-fit max-w-full transition-all duration-200",
+              "px-3.5 sm:px-4 py-2.5 rounded-lg inline-block w-fit max-w-full min-w-0 overflow-hidden transition-all duration-200",
               {
                 "bg-blue-600 text-white": message.isUserMessage,
                 "bg-gray-200 text-gray-900": !message.isUserMessage,
@@ -278,9 +278,12 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
           >
             {typeof formattedText === "string" ? (
               <ReactMarkdown
-                className={cn("prose max-w-none break-words", {
-                  "text-zinc-50": message.isUserMessage,
-                })}
+                className={cn(
+                  "prose prose-sm sm:prose-base max-w-full min-w-0 break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_a]:break-all [&_img]:max-w-full",
+                  {
+                    "text-zinc-50 prose-invert": message.isUserMessage,
+                  }
+                )}
                 components={{
                   a: ({ href, children, ...props }) => {
                     if (href?.startsWith("#jump-idx-")) {
@@ -313,9 +316,8 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                           title={
                             source?.name
                               ? validPage
-                                ? `${source.name} — ${
-                                    type === "slide" ? "Slide" : "Page"
-                                  } ${validPage}`
+                                ? `${source.name} — ${type === "slide" ? "Slide" : "Page"
+                                } ${validPage}`
                                 : `Switch to ${source.name}`
                               : undefined
                           }
@@ -356,11 +358,11 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                               })
                             );
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 select-none"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 select-none max-w-full min-w-0"
                           title={`Switch to ${docName} - ${type} ${num}`}
                         >
                           <FileText className="h-3 w-3 text-blue-600 shrink-0" />
-                          <span>{children}</span>
+                          <span className="truncate">{children}</span>
                         </button>
                       );
                     }
@@ -415,7 +417,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
             {!message.isUserMessage &&
               effectiveSources.length > 1 &&
               citedIndices.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-zinc-300/80 flex flex-wrap items-center gap-1.5 not-prose">
+                <div className="mt-2 pt-2 border-t border-zinc-300/80 flex flex-wrap items-center gap-1.5 not-prose min-w-0 max-w-full">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mr-0.5">
                     Sources:
                   </span>
@@ -436,7 +438,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                             })
                           );
                         }}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-blue-50 text-zinc-700 hover:text-blue-700 border border-zinc-300 hover:border-blue-300 text-[11px] font-medium transition-colors max-w-[190px]"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-blue-50 text-zinc-700 hover:text-blue-700 border border-zinc-300 hover:border-blue-300 text-[11px] font-medium transition-colors max-w-full sm:max-w-[190px] min-w-0"
                         title={`Open ${src.name}`}
                       >
                         <span className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded bg-blue-600 text-white text-[9px] font-bold px-0.5 shrink-0">

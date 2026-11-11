@@ -10,6 +10,7 @@ import UserAccountNav from "./UserAccountNav";
 import MaxWidthWrapper from "./MaxWidthWrapper";
 import { buttonVariants } from "@/components/ui/button";
 import MobileNav from "./MobileNav";
+import NavbarRouteGate from "./NavbarRouteGate";
 
 const Navbar = async () => {
   const { getUser } = getKindeServerSession();
@@ -19,7 +20,8 @@ const Navbar = async () => {
   ]);
 
   return (
-    <nav className="sticky h-14 inset-x-0 top-0 z-40 w-full border-b border-gray-200 bg-white/95 backdrop-blur-lg transition-all">
+    <NavbarRouteGate>
+      <nav className="sticky h-14 inset-x-0 top-0 z-40 w-full border-b border-gray-200 bg-white/95 backdrop-blur-lg transition-all">
       <MaxWidthWrapper>
         <div className="flex h-14 items-center justify-between">
           <Link href="/" className="flex z-[110] font-semibold items-center gap-1">
@@ -114,6 +116,7 @@ const Navbar = async () => {
         </div>
       </MaxWidthWrapper>
     </nav>
+    </NavbarRouteGate>
   );
 };
 

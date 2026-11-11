@@ -99,7 +99,7 @@ export default async function AdminLayout({
               href="/dashboard"
               className={cn(
                 buttonVariants({ variant: "default" }),
-                "bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                "bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] hover:opacity-95 text-white gap-1.5 rounded-full"
               )}
             >
               <ArrowLeft className="h-4 w-4" />
@@ -112,16 +112,13 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] bg-zinc-50/60">
-      <AdminSidebar
-        adminEmail={rbac.user.email}
-        adminName={rbac.user.name}
-        kindeId={rbac.user.id}
-      />
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {children}
-      </main>
-    </div>
+    <AdminSidebar
+      adminEmail={rbac.user.email}
+      adminName={rbac.user.name}
+      kindeId={rbac.user.id}
+    >
+      {children}
+    </AdminSidebar>
   );
 }
 

@@ -90,14 +90,14 @@ export default function MultiDocumentViewLayout({
   const mobileKeyboardStyle: React.CSSProperties | undefined =
     isMobile && isMobileChatOpen && isKeyboardVisible
       ? {
-          position: "fixed",
-          top: `${offsetTop}px`,
-          left: 0,
-          right: 0,
-          height: `${viewportHeight}px`,
-          bottom: "auto",
-          zIndex: 80,
-        }
+        position: "fixed",
+        top: `${offsetTop}px`,
+        left: 0,
+        right: 0,
+        height: `${viewportHeight}px`,
+        bottom: "auto",
+        zIndex: 80,
+      }
       : undefined;
 
   // Keep local state synchronized if URL query parameters navigate between file sets
@@ -153,11 +153,11 @@ export default function MultiDocumentViewLayout({
         (docId ? list.find((f) => f.id === docId) : undefined) ||
         (lowerDoc
           ? list.find((f) => f.name.toLowerCase() === lowerDoc) ||
-            list.find(
-              (f) =>
-                f.name.toLowerCase().includes(lowerDoc) ||
-                lowerDoc.includes(f.name.toLowerCase())
-            )
+          list.find(
+            (f) =>
+              f.name.toLowerCase().includes(lowerDoc) ||
+              lowerDoc.includes(f.name.toLowerCase())
+          )
           : undefined);
 
       let target = findMatch(selectedFiles);
@@ -390,20 +390,20 @@ export default function MultiDocumentViewLayout({
             isDesktopChatHidden
               ? "lg:hidden"
               : isChatExpanded
-              ? "lg:flex lg:w-full lg:flex-1 lg:h-full lg:border-x lg:border-gray-200 lg:transition-all lg:duration-300"
-              : "lg:flex lg:w-96 lg:shrink-0 lg:flex-[0.75] lg:h-full lg:border-l lg:border-gray-200 lg:transition-all lg:duration-300",
-            "max-lg:fixed max-lg:inset-x-0 max-lg:shadow-[0_-10px_35px_rgba(0,0,0,0.2)] max-lg:overflow-hidden",
+                ? "lg:flex lg:w-full lg:flex-1 lg:h-full lg:border-x lg:border-gray-200 lg:transition-all lg:duration-300"
+                : "lg:flex lg:w-96 lg:shrink-0 lg:flex-[0.75] lg:h-full lg:border-l lg:border-gray-200 lg:transition-all lg:duration-300",
+            "max-lg:fixed max-lg:inset-x-0 max-lg:w-full max-lg:max-w-full max-lg:shadow-[0_-10px_35px_rgba(0,0,0,0.2)] max-lg:overflow-hidden",
             isKeyboardVisible
               ? "max-lg:z-[80] max-lg:rounded-none max-lg:border-t-0 max-lg:transition-none"
               : cn(
-                  "max-lg:bottom-0 max-lg:top-auto max-lg:z-[70] max-lg:border-t max-lg:border-zinc-300",
-                  "max-lg:transition-[height,transform,opacity,border-radius] max-lg:duration-300 max-lg:ease-in-out",
-                  isMobileChatOpen
-                    ? isChatExpanded
-                      ? "max-lg:h-[88dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
-                      : "max-lg:h-[58dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
-                    : "max-lg:h-0 max-lg:translate-y-full max-lg:opacity-0 max-lg:pointer-events-none"
-                )
+                "max-lg:bottom-0 max-lg:top-auto max-lg:z-[70] max-lg:border-t max-lg:border-zinc-300",
+                "max-lg:transition-[height,transform,opacity,border-radius] max-lg:duration-300 max-lg:ease-in-out",
+                isMobileChatOpen
+                  ? isChatExpanded
+                    ? "max-lg:h-[88dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
+                    : "max-lg:h-[58dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
+                  : "max-lg:h-0 max-lg:translate-y-full max-lg:opacity-0 max-lg:pointer-events-none"
+              )
           )}
         >
           {/* Mobile Handle Pill */}
@@ -495,7 +495,7 @@ export default function MultiDocumentViewLayout({
           </div>
 
           {/* Chat Container */}
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden flex flex-col">
             <ChatWrapper
               key={multiSessionId}
               fileId={multiSessionId}

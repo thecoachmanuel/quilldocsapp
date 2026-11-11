@@ -27,7 +27,7 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
   return (
     <div
       className={cn(
-        "shrink-0 w-full bg-white border-t border-zinc-200 transition-all",
+        "shrink-0 w-full max-w-full min-w-0 overflow-hidden bg-white border-t border-zinc-200 transition-all",
         isKeyboardVisible
           ? "pb-1 max-lg:pb-1"
           : "pb-[env(safe-area-inset-bottom,0.5rem)] max-lg:pb-2.5"
@@ -35,15 +35,15 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
     >
       <div
         className={cn(
-          "mx-auto flex flex-grow gap-2 sm:gap-3 transition-all duration-300",
+          "mx-auto w-full min-w-0 flex flex-grow gap-2 sm:gap-3 transition-all duration-300",
           effectiveExpanded
-            ? "max-w-4xl xl:max-w-5xl 2xl:max-w-6xl px-3 sm:px-6"
-            : "lg:max-w-4xl xl:max-w-5xl px-0"
+            ? "max-w-full sm:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl px-2 sm:px-6"
+            : "max-w-full lg:max-w-4xl xl:max-w-5xl px-0"
         )}
       >
-        <div className="relative flex h-full flex-1 items-stretch md:flex-col">
-          <div className="relative flex flex-col w-full flex-grow p-2 sm:p-3.5">
-            <div className="relative flex items-center">
+        <div className="relative flex h-full w-full min-w-0 flex-1 items-stretch md:flex-col">
+          <div className="relative flex flex-col w-full min-w-0 flex-grow p-2 sm:p-3.5">
+            <div className="relative flex items-center w-full min-w-0">
               <Textarea
                 rows={1}
                 ref={textarearef}
@@ -67,7 +67,7 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
                   }
                 }}
                 placeholder="Enter your question..."
-                className="resize-none pr-12 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
+                className="w-full min-w-0 resize-none pr-12 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
               />
               <Button
                 disabled={isLoading || isDisabled}

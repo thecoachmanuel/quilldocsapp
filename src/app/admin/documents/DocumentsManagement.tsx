@@ -8,18 +8,16 @@ import {
   FileText,
   File,
   Presentation,
-  Search,
   Trash2,
   ExternalLink,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
   RefreshCw,
   MessageSquare,
   Loader2,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +27,16 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import Skeleton from "react-loading-skeleton";
+import {
+  AdminFilterPills,
+  AdminStatCard,
+  AdminTableControls,
+  ORANGE_CARD_CLASS,
+  ORANGE_CARD_HEADER_CLASS,
+  ORANGE_OUTLINE_BTN_CLASS,
+  ORANGE_TABLE_BODY_ROW_CLASS,
+  ORANGE_TABLE_HEAD_ROW_CLASS,
+} from "../AdminComponents";
 
 export default function DocumentsManagement() {
   const { toast } = useToast();
@@ -94,28 +102,38 @@ export default function DocumentsManagement() {
     },
   });
 
+  const summary = useMemo(() => {
+    const list = files || [];
+    return {
+      total: list.length,
+      success: list.filter((f: any) => f.uploadStatus === "SUCCESS").length,
+      processing: list.filter(
+        (f: any) =>
+          f.uploadStatus === "PROCESSING" || f.uploadStatus === "PENDING"
+      ).length,
+      failed: list.filter((f: any) => f.uploadStatus === "FAILED").length,
+    };
+  }, [files]);
+
   const filteredFiles = useMemo(() => {
     if (!files) return [];
     return files.filter((f: any) => {
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch =
         !q ||
-        f.name?.toLowerCase().includes(q) ||
-        f.ownerEmail?.toLowerCase().includes(q) ||
-        f.id?.toLowerCase().includes(q);
+        (f.name || "").toLowerCase().includes(q) ||
+        (f.ownerEmail || "").toLowerCase().includes(q) ||
+        (f.id || "").toLowerCase().includes(q);
 
       const matchesStatus =
-        statusFilter === "ALL" ||
-        (statusFilter === "PROCESSING"
-          ? f.uploadStatus === "PROCESSING" || f.uploadStatus === "PENDING"
-          : f.uploadStatus === statusFilter);
+        statusFilter === "ALL" || f.uploadStatus === statusFilter;
 
       const ext = (f.fileType || "").toUpperCase();
       const matchesType =
         typeFilter === "ALL" ||
-        (typeFilter === "PDF" && ext === "PDF") ||
         (typeFilter === "DOCX" && (ext === "DOCX" || ext === "DOC")) ||
-        (typeFilter === "PPTX" && (ext === "PPTX" || ext === "PPT"));
+        (typeFilter === "PPTX" && (ext === "PPTX" || ext === "PPT")) ||
+        ext === typeFilter;
 
       return matchesSearch && matchesStatus && matchesType;
     });
@@ -123,97 +141,106 @@ export default function DocumentsManagement() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200 pb-5">
+      {/* Page Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#141010]">
             Uploaded Documents
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Inspect, moderate, and manage all uploaded PDFs, Word documents, and PowerPoint decks across users.
+          <p className="mt-0.5 text-xs sm:text-sm text-zinc-500">
+            Inspect, moderate, and manage all uploaded PDFs, Word documents, and
+            PowerPoint decks across users.
           </p>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
+        <button
+          type="button"
           onClick={invalidateAll}
           disabled={isFetching}
-          className="h-9 gap-1.5 bg-white border-zinc-200 text-zinc-700 self-start sm:self-auto"
+          className={cn(ORANGE_OUTLINE_BTN_CLASS, "self-start sm:self-auto")}
         >
           <RefreshCw
             className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
           />
           Refresh
-        </Button>
+        </button>
       </div>
 
-      {/* Search & Filters */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-            <Input
-              placeholder="Search by file name, owner email, or file ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9 text-sm"
+      {/* KPI Row (.card-statistic-4) */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <AdminStatCard
+          title="All Documents"
+          value={summary.total}
+          subtitle="Total uploaded files"
+          icon={FileText}
+        />
+        <AdminStatCard
+          title="Indexed Ready"
+          value={summary.success}
+          valueClassName="text-emerald-600"
+          subtitle="Searchable & ready for AI chat"
+          icon={CheckCircle2}
+        />
+        <AdminStatCard
+          title="Processing Queue"
+          value={summary.processing}
+          valueClassName="text-amber-600"
+          subtitle="Currently indexing vectors"
+          icon={Clock}
+        />
+        <AdminStatCard
+          title="Failed Uploads"
+          value={summary.failed}
+          valueClassName={summary.failed > 0 ? "text-red-600" : undefined}
+          subtitle="Exceeded limit or errored"
+          icon={AlertCircle}
+        />
+      </div>
+
+      {/* Main Card Table (matches orange-backend users/page card + nav-pills + filter + striped table) */}
+      {isLoading ? (
+        <Skeleton height={380} borderRadius={17} />
+      ) : (
+        <div className={cn(ORANGE_CARD_CLASS, "overflow-hidden")}>
+          <div className={ORANGE_CARD_HEADER_CLASS}>
+            <AdminFilterPills
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { label: "All Status", value: "ALL", count: summary.total },
+                { label: "Success", value: "SUCCESS", count: summary.success },
+                {
+                  label: "Processing",
+                  value: "PROCESSING",
+                  count: summary.processing,
+                },
+                { label: "Failed", value: "FAILED", count: summary.failed },
+              ]}
+            />
+
+            <AdminFilterPills
+              value={typeFilter}
+              onChange={setTypeFilter}
+              options={[
+                { label: "All Formats", value: "ALL" },
+                { label: "PDF", value: "PDF" },
+                { label: "DOCX", value: "DOCX" },
+                { label: "PPTX", value: "PPTX" },
+              ]}
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Format Filter */}
-            <div className="flex items-center rounded-lg bg-zinc-100 p-0.5 border border-zinc-200">
-              {(["ALL", "PDF", "DOCX", "PPTX"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTypeFilter(t)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition",
-                    typeFilter === t
-                      ? "bg-white text-blue-600 shadow-sm font-semibold"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  )}
-                >
-                  {t === "ALL" ? "All Formats" : t}
-                </button>
-              ))}
-            </div>
+          <AdminTableControls
+            showingLabel={`Showing ${filteredFiles.length} of ${summary.total} documents`}
+            searchPlaceholder="Search file name, owner email, or ID..."
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
 
-            {/* Status Filter */}
-            <div className="flex items-center rounded-lg bg-zinc-100 p-0.5 border border-zinc-200">
-              {(["ALL", "SUCCESS", "PROCESSING", "FAILED"] as const).map(
-                (s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setStatusFilter(s)}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-xs font-medium transition",
-                      statusFilter === s
-                        ? "bg-white text-blue-600 shadow-sm font-semibold"
-                        : "text-zinc-600 hover:text-zinc-900"
-                    )}
-                  >
-                    {s === "ALL" ? "All Status" : s}
-                  </button>
-                )
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Documents Table */}
-      {isLoading ? (
-        <Skeleton height={340} className="rounded-xl" />
-      ) : (
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-zinc-200 bg-zinc-50/80 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                <tr className={ORANGE_TABLE_HEAD_ROW_CLASS}>
                   <th className="py-3.5 px-5">Document</th>
                   <th className="py-3.5 px-4">Owner</th>
                   <th className="py-3.5 px-4">Indexing Status</th>
@@ -222,7 +249,7 @@ export default function DocumentsManagement() {
                   <th className="py-3.5 px-5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 text-sm">
+              <tbody className="text-sm">
                 {filteredFiles.length === 0 ? (
                   <tr>
                     <td
@@ -239,17 +266,14 @@ export default function DocumentsManagement() {
                     const isDoc = ext === "DOCX" || ext === "DOC";
 
                     return (
-                      <tr
-                        key={f.id}
-                        className="hover:bg-zinc-50/70 transition-colors"
-                      >
+                      <tr key={f.id} className={ORANGE_TABLE_BODY_ROW_CLASS}>
                         <td className="py-4 px-5">
                           <div className="flex items-center gap-3">
                             <div
                               className={cn(
-                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border",
+                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border",
                                 isPpt
-                                  ? "bg-orange-50 text-orange-600 border-orange-200"
+                                  ? "bg-orange-50 text-[#FE1B03] border-orange-200"
                                   : isDoc
                                   ? "bg-blue-50 text-blue-600 border-blue-200"
                                   : "bg-red-50 text-red-600 border-red-200"
@@ -266,12 +290,12 @@ export default function DocumentsManagement() {
                             <div className="min-w-0 max-w-xs sm:max-w-sm">
                               <Link
                                 href={`/dashboard/${f.id}`}
-                                className="font-semibold text-zinc-900 hover:text-blue-600 truncate block"
+                                className="font-semibold text-[#141010] hover:text-[#FE1B03] truncate block"
                               >
                                 {f.name}
                               </Link>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className="rounded bg-zinc-100 px-1.5 py-0.2 text-[10px] font-semibold text-zinc-600">
+                                <span className="rounded bg-[#f4f6f9] px-1.5 py-0.2 text-[10px] font-semibold text-zinc-600">
                                   {ext}
                                 </span>
                                 <code className="text-[10px] font-mono text-zinc-400 truncate">
@@ -283,7 +307,7 @@ export default function DocumentsManagement() {
                         </td>
 
                         <td className="py-4 px-4">
-                          <p className="font-medium text-zinc-900 truncate max-w-[180px]">
+                          <p className="font-medium text-[#141010] truncate max-w-[180px]">
                             {f.ownerName}
                           </p>
                           <p className="text-xs text-zinc-500 truncate max-w-[180px]">
@@ -301,7 +325,7 @@ export default function DocumentsManagement() {
                               })
                             }
                             className={cn(
-                              "rounded-full px-2.5 py-1 text-xs font-semibold border cursor-pointer",
+                              "rounded-full px-3 py-1 text-xs font-semibold border cursor-pointer focus:outline-none",
                               f.uploadStatus === "SUCCESS"
                                 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                 : f.uploadStatus === "FAILED"
@@ -317,7 +341,7 @@ export default function DocumentsManagement() {
 
                         <td className="py-4 px-4">
                           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-700">
-                            <MessageSquare className="h-3.5 w-3.5 text-blue-600" />
+                            <MessageSquare className="h-3.5 w-3.5 text-[#FE1B03]" />
                             {f.messagesCount} messages
                           </span>
                         </td>
@@ -332,26 +356,19 @@ export default function DocumentsManagement() {
                           <div className="inline-flex items-center justify-end gap-1.5">
                             <Link
                               href={`/dashboard/${f.id}`}
-                              className={cn(
-                                buttonVariants({
-                                  variant: "outline",
-                                  size: "sm",
-                                }),
-                                "h-8 px-2.5 text-xs gap-1 border-zinc-200 text-zinc-700"
-                              )}
+                              className="inline-flex items-center gap-1 rounded-full border border-[#ebebeb] bg-white px-3 py-1.5 text-xs font-medium text-[#141010] hover:border-[#FF6F43] hover:text-[#FE1B03] transition-colors"
                             >
                               <ExternalLink className="h-3.5 w-3.5" />
                               Inspect
                             </Link>
-                            <Button
-                              variant="outline"
-                              size="sm"
+                            <button
+                              type="button"
                               onClick={() => setDeletingFile(f)}
-                              className="h-8 px-2 text-xs border-zinc-200 text-red-600 hover:bg-red-50 hover:border-red-200"
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-[#ebebeb] bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
                               title="Delete Document"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -369,7 +386,7 @@ export default function DocumentsManagement() {
         open={Boolean(deletingFile)}
         onOpenChange={(open) => !open && setDeletingFile(null)}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md rounded-[17px]">
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-red-600 flex items-center gap-2">
               <Trash2 className="h-5 w-5" />
@@ -394,6 +411,7 @@ export default function DocumentsManagement() {
                   type="button"
                   variant="outline"
                   onClick={() => setDeletingFile(null)}
+                  className="rounded-full"
                 >
                   Cancel
                 </Button>
@@ -404,6 +422,7 @@ export default function DocumentsManagement() {
                   onClick={() =>
                     deleteFileMutation.mutate({ id: deletingFile.id })
                   }
+                  className="rounded-full"
                 >
                   {deleteFileMutation.isLoading && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -418,4 +437,3 @@ export default function DocumentsManagement() {
     </div>
   );
 }
-

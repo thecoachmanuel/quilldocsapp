@@ -32,6 +32,17 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import Skeleton from "react-loading-skeleton";
+import {
+  AdminFilterPills,
+  AdminStatCard,
+  AdminTableControls,
+  ORANGE_BTN_CLASS,
+  ORANGE_CARD_CLASS,
+  ORANGE_CARD_HEADER_CLASS,
+  ORANGE_OUTLINE_BTN_CLASS,
+  ORANGE_TABLE_BODY_ROW_CLASS,
+  ORANGE_TABLE_HEAD_ROW_CLASS,
+} from "../AdminComponents";
 
 interface ContactMessageItem {
   id: string;
@@ -238,32 +249,40 @@ export default function ContactManagement() {
   return (
     <div className="space-y-6">
       {/* Top Banner & Tab Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-zinc-200 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900">
-            Contact & Support Center
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#141010]">
+            Contact &amp; Support Center
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Review user inquiries and manage official public contact information.
+          <p className="mt-0.5 text-xs sm:text-sm text-zinc-500">
+            Review user inquiries and manage official public contact
+            information.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg bg-zinc-100 p-1 border border-zinc-200/80">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-full bg-white p-1 border border-[#ebebeb]">
             <button
               type="button"
               onClick={() => setActiveTab("inquiries")}
               className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all",
+                "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all",
                 activeTab === "inquiries"
-                  ? "bg-white text-zinc-900 shadow-sm"
-                  : "text-zinc-600 hover:text-zinc-900"
+                  ? "bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] text-white shadow-sm"
+                  : "text-zinc-600 hover:text-[#141010]"
               )}
             >
               <Inbox className="h-3.5 w-3.5" />
               <span>Inquiries</span>
               {stats.unread > 0 && (
-                <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] text-white">
+                <span
+                  className={cn(
+                    "ml-0.5 rounded-full px-1.5 py-0.2 text-[10px]",
+                    activeTab === "inquiries"
+                      ? "bg-white text-[#FE1B03]"
+                      : "bg-[#FE1B03] text-white"
+                  )}
+                >
                   {stats.unread}
                 </span>
               )}
@@ -272,10 +291,10 @@ export default function ContactManagement() {
               type="button"
               onClick={() => setActiveTab("info")}
               className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all",
+                "flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all",
                 activeTab === "info"
-                  ? "bg-white text-zinc-900 shadow-sm"
-                  : "text-zinc-600 hover:text-zinc-900"
+                  ? "bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] text-white shadow-sm"
+                  : "text-zinc-600 hover:text-[#141010]"
               )}
             >
               <Settings className="h-3.5 w-3.5" />
@@ -283,87 +302,75 @@ export default function ContactManagement() {
             </button>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
+          <button
+            type="button"
             onClick={() => fetchMessages(true)}
             disabled={isRefreshing}
-            className="h-9 px-3"
+            className={cn(ORANGE_OUTLINE_BTN_CLASS, "h-9 px-3.5")}
             title="Refresh Inquiries"
           >
-            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-          </Button>
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
+            />
+            Refresh
+          </button>
         </div>
       </div>
 
       {activeTab === "inquiries" ? (
         <>
-          {/* Stats Bar */}
+          {/* KPI Stats Row (.card-statistic-4) */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                  Total Inquiries
-                </span>
-                <Mail className="h-4 w-4 text-blue-600" />
-              </div>
-              <p className="mt-2 text-2xl font-bold text-zinc-900">{stats.total}</p>
-            </div>
+            <AdminStatCard
+              title="Total Inquiries"
+              value={stats.total}
+              subtitle="All contact submissions"
+              icon={Mail}
+            />
 
-            <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-amber-800">
-                  Unread Messages
-                </span>
-                <AlertCircle className="h-4 w-4 text-amber-600" />
-              </div>
-              <p className="mt-2 text-2xl font-bold text-amber-900">{stats.unread}</p>
-            </div>
+            <AdminStatCard
+              title="Unread Messages"
+              value={stats.unread}
+              valueClassName={stats.unread > 0 ? "text-[#FE1B03]" : undefined}
+              subtitle="Awaiting admin review"
+              icon={AlertCircle}
+            />
 
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-800">
-                  Resolved
-                </span>
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              </div>
-              <p className="mt-2 text-2xl font-bold text-emerald-900">{stats.resolved}</p>
-            </div>
+            <AdminStatCard
+              title="Resolved"
+              value={stats.resolved}
+              valueClassName="text-emerald-600"
+              subtitle="Completed support inquiries"
+              icon={CheckCircle2}
+            />
           </div>
 
-          {/* Search & Status Filters */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
-              <Input
-                placeholder="Search by name, email, subject, or message..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9 text-xs sm:text-sm"
+          {/* Inquiries Table Card */}
+          <div className={cn(ORANGE_CARD_CLASS, "overflow-hidden")}>
+            <div className={ORANGE_CARD_HEADER_CLASS}>
+              <AdminFilterPills
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { label: "All Inquiries", value: "ALL", count: stats.total },
+                  { label: "Unread", value: "UNREAD", count: stats.unread },
+                  { label: "Read", value: "READ" },
+                  {
+                    label: "Resolved",
+                    value: "RESOLVED",
+                    count: stats.resolved,
+                  },
+                ]}
               />
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              {(["ALL", "UNREAD", "READ", "RESOLVED"] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  onClick={() => setStatusFilter(filter)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 border",
-                    statusFilter === filter
-                      ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
-                      : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50"
-                  )}
-                >
-                  {filter}
-                </button>
-              ))}
-            </div>
-          </div>
+            <AdminTableControls
+              showingLabel={`Showing ${filteredMessages.length} of ${stats.total} messages`}
+              searchPlaceholder="Search name, email, subject, or message..."
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+            />
 
-          {/* Inquiries Table / Cards */}
-          <div className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
             {isLoadingMessages ? (
               <div className="p-6 space-y-4">
                 <Skeleton height={40} />
@@ -384,18 +391,20 @@ export default function ContactManagement() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-zinc-50/80 border-b border-zinc-200 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                    <tr>
-                      <th className="px-4 py-3.5">Sender</th>
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className={ORANGE_TABLE_HEAD_ROW_CLASS}>
+                      <th className="px-5 py-3.5">Sender</th>
                       <th className="px-4 py-3.5">Subject</th>
-                      <th className="px-4 py-3.5 hidden md:table-cell">Message Snippet</th>
+                      <th className="px-4 py-3.5 hidden md:table-cell">
+                        Message Snippet
+                      </th>
                       <th className="px-4 py-3.5">Date</th>
                       <th className="px-4 py-3.5">Status</th>
-                      <th className="px-4 py-3.5 text-right">Actions</th>
+                      <th className="px-5 py-3.5 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-200">
+                  <tbody>
                     {filteredMessages.map((msg) => {
                       const isUnread = msg.status === "UNREAD";
                       const isResolved = msg.status === "RESOLVED";
@@ -404,22 +413,24 @@ export default function ContactManagement() {
                         <tr
                           key={msg.id}
                           className={cn(
-                            "hover:bg-zinc-50/70 transition-colors",
-                            isUnread && "bg-amber-50/20 font-medium"
+                            ORANGE_TABLE_BODY_ROW_CLASS,
+                            isUnread && "font-medium bg-[#fff8f6]/70"
                           )}
                         >
-                          <td className="px-4 py-3.5 whitespace-nowrap">
-                            <div className="font-semibold text-zinc-900">{msg.name}</div>
+                          <td className="px-5 py-3.5 whitespace-nowrap">
+                            <div className="font-semibold text-[#141010]">
+                              {msg.name}
+                            </div>
                             <a
                               href={`mailto:${msg.email}?subject=Re: ${encodeURIComponent(msg.subject || "QuillDocs Inquiry")}`}
-                              className="text-xs text-blue-600 hover:underline"
+                              className="text-xs text-[#FE1B03] hover:underline"
                             >
                               {msg.email}
                             </a>
                           </td>
 
                           <td className="px-4 py-3.5 whitespace-nowrap">
-                            <span className="font-medium text-zinc-800 truncate max-w-[180px] sm:max-w-xs block">
+                            <span className="font-medium text-[#141010] truncate max-w-[180px] sm:max-w-xs block">
                               {msg.subject || "General Inquiry"}
                             </span>
                           </td>
@@ -435,49 +446,47 @@ export default function ContactManagement() {
                           <td className="px-4 py-3.5 whitespace-nowrap">
                             <span
                               className={cn(
-                                "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border",
+                                "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border",
                                 isUnread
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                                  ? "bg-[#fff3ef] text-[#FE1B03] border-[#ffd2c4]"
                                   : isResolved
                                   ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-blue-50 text-blue-700 border-blue-200"
+                                  : "bg-zinc-100 text-zinc-700 border-zinc-200"
                               )}
                             >
                               {msg.status}
                             </span>
                           </td>
 
-                          <td className="px-4 py-3.5 whitespace-nowrap text-right">
+                          <td className="px-5 py-3.5 whitespace-nowrap text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               {/* View Details */}
-                              <Button
-                                size="sm"
-                                variant="ghost"
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setSelectedMessage(msg);
                                   if (msg.status === "UNREAD") {
                                     handleUpdateStatus(msg.id, "READ");
                                   }
                                 }}
-                                className="h-8 w-8 p-0"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-white text-zinc-600 hover:border-[#FF6F43] hover:text-[#FE1B03] transition-colors"
                                 title="View Full Message"
                               >
-                                <Eye className="h-4 w-4 text-zinc-600" />
-                              </Button>
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
 
                               {/* Quick Reply Email */}
                               <a
                                 href={`mailto:${msg.email}?subject=Re: ${encodeURIComponent(msg.subject || "QuillDocs Inquiry")}`}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-100 text-blue-600 transition-colors"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-white text-[#FE1B03] hover:bg-[#fff5f2] transition-colors"
                                 title="Reply via Email"
                               >
-                                <Reply className="h-4 w-4" />
+                                <Reply className="h-3.5 w-3.5" />
                               </a>
 
                               {/* Toggle Resolved */}
-                              <Button
-                                size="sm"
-                                variant="ghost"
+                              <button
+                                type="button"
                                 onClick={() =>
                                   handleUpdateStatus(
                                     msg.id,
@@ -485,24 +494,29 @@ export default function ContactManagement() {
                                   )
                                 }
                                 className={cn(
-                                  "h-8 w-8 p-0",
-                                  isResolved ? "text-emerald-600" : "text-zinc-400 hover:text-emerald-600"
+                                  "inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-white transition-colors",
+                                  isResolved
+                                    ? "text-emerald-600 border-emerald-200 bg-emerald-50"
+                                    : "text-zinc-400 hover:text-emerald-600 hover:border-emerald-200"
                                 )}
-                                title={isResolved ? "Mark as Open" : "Mark as Resolved"}
+                                title={
+                                  isResolved
+                                    ? "Mark as Open"
+                                    : "Mark as Resolved"
+                                }
                               >
-                                <Check className="h-4 w-4" />
-                              </Button>
+                                <Check className="h-3.5 w-3.5" />
+                              </button>
 
                               {/* Delete */}
-                              <Button
-                                size="sm"
-                                variant="ghost"
+                              <button
+                                type="button"
                                 onClick={() => handleDeleteMessage(msg.id)}
-                                className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-white text-red-500 hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
                                 title="Delete Inquiry"
                               >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -516,15 +530,16 @@ export default function ContactManagement() {
         </>
       ) : (
         /* Edit Contact Information Tab */
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7">
-            <div className="bg-white p-6 sm:p-8 rounded-xl border border-zinc-200 shadow-sm space-y-6">
+            <div className={cn(ORANGE_CARD_CLASS, "p-6 sm:p-8 space-y-6")}>
               <div>
-                <h2 className="text-xl font-bold text-zinc-900 tracking-tight">
+                <h2 className="text-lg font-bold text-[#141010] tracking-tight">
                   Public Contact Settings
                 </h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Update the official contact information displayed on the public Contact page and in the footer.
+                  Update the official contact information displayed on the
+                  public Contact page and in the footer.
                 </p>
               </div>
 
@@ -538,7 +553,7 @@ export default function ContactManagement() {
                 <form onSubmit={handleSaveContactInfo} className="space-y-5">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-                      <Mail className="h-3.5 w-3.5 text-blue-600" />
+                      <Mail className="h-3.5 w-3.5 text-[#FE1B03]" />
                       Support Email
                     </label>
                     <Input
@@ -546,7 +561,10 @@ export default function ContactManagement() {
                       required
                       value={contactInfo.email}
                       onChange={(e) =>
-                        setContactInfo((prev) => ({ ...prev, email: e.target.value }))
+                        setContactInfo((prev) => ({
+                          ...prev,
+                          email: e.target.value,
+                        }))
                       }
                       placeholder="support@quilldocs.com"
                       className="h-10 text-sm"
@@ -555,14 +573,17 @@ export default function ContactManagement() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-                      <Phone className="h-3.5 w-3.5 text-blue-600" />
+                      <Phone className="h-3.5 w-3.5 text-[#FE1B03]" />
                       Support Phone Number
                     </label>
                     <Input
                       required
                       value={contactInfo.phone}
                       onChange={(e) =>
-                        setContactInfo((prev) => ({ ...prev, phone: e.target.value }))
+                        setContactInfo((prev) => ({
+                          ...prev,
+                          phone: e.target.value,
+                        }))
                       }
                       placeholder="+2347038587375"
                       className="h-10 text-sm"
@@ -571,14 +592,17 @@ export default function ContactManagement() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-                      <MapPin className="h-3.5 w-3.5 text-blue-600" />
+                      <MapPin className="h-3.5 w-3.5 text-[#FE1B03]" />
                       Office / Mailing Address
                     </label>
                     <Input
                       required
                       value={contactInfo.address}
                       onChange={(e) =>
-                        setContactInfo((prev) => ({ ...prev, address: e.target.value }))
+                        setContactInfo((prev) => ({
+                          ...prev,
+                          address: e.target.value,
+                        }))
                       }
                       placeholder="Lagos, Nigeria"
                       className="h-10 text-sm"
@@ -587,24 +611,27 @@ export default function ContactManagement() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-blue-600" />
+                      <Clock className="h-3.5 w-3.5 text-[#FE1B03]" />
                       Support Hours
                     </label>
                     <Input
                       required
                       value={contactInfo.hours}
                       onChange={(e) =>
-                        setContactInfo((prev) => ({ ...prev, hours: e.target.value }))
+                        setContactInfo((prev) => ({
+                          ...prev,
+                          hours: e.target.value,
+                        }))
                       }
                       placeholder="Monday - Friday: 9:00 AM - 6:00 PM (UTC+1)"
                       className="h-10 text-sm"
                     />
                   </div>
 
-                  <Button
+                  <button
                     type="submit"
                     disabled={isSavingInfo}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-10 transition-all"
+                    className={cn(ORANGE_BTN_CLASS, "w-full h-10")}
                   >
                     {isSavingInfo ? (
                       <>
@@ -614,7 +641,7 @@ export default function ContactManagement() {
                     ) : (
                       "Save Contact Information"
                     )}
-                  </Button>
+                  </button>
                 </form>
               )}
             </div>
@@ -622,8 +649,8 @@ export default function ContactManagement() {
 
           {/* Live Preview Card */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+            <div className={cn(ORANGE_CARD_CLASS, "p-6 space-y-4")}>
+              <div className="flex items-center justify-between border-b border-[#ebebeb] pb-3">
                 <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">
                   Live Preview on Contact Page
                 </span>
@@ -631,7 +658,7 @@ export default function ContactManagement() {
                   href="/contact"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                  className="text-xs text-[#FE1B03] font-semibold hover:underline flex items-center gap-1"
                 >
                   View Page <ExternalLink className="h-3 w-3" />
                 </a>
@@ -640,7 +667,7 @@ export default function ContactManagement() {
               <div className="space-y-4 text-sm">
                 <div>
                   <p className="text-xs text-zinc-400">Email</p>
-                  <p className="font-semibold text-blue-600">{contactInfo.email}</p>
+                  <p className="font-semibold text-[#FE1B03]">{contactInfo.email}</p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-400">Phone</p>
@@ -739,7 +766,7 @@ export default function ContactManagement() {
                 <div className="flex items-center gap-2">
                   <a
                     href={`mailto:${selectedMessage.email}?subject=Re: ${encodeURIComponent(selectedMessage.subject || "QuillDocs Inquiry")}`}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                    className={ORANGE_BTN_CLASS}
                   >
                     <Reply className="h-3.5 w-3.5" />
                     Reply via Email

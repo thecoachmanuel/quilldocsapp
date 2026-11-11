@@ -32,6 +32,17 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import Skeleton from "react-loading-skeleton";
+import {
+  AdminFilterPills,
+  AdminStatCard,
+  AdminTableControls,
+  ORANGE_BTN_CLASS,
+  ORANGE_CARD_CLASS,
+  ORANGE_CARD_HEADER_CLASS,
+  ORANGE_OUTLINE_BTN_CLASS,
+  ORANGE_TABLE_BODY_ROW_CLASS,
+  ORANGE_TABLE_HEAD_ROW_CLASS,
+} from "../AdminComponents";
 
 export default function UsersManagement() {
   const { toast } = useToast();
@@ -168,6 +179,16 @@ export default function UsersManagement() {
     },
   });
 
+  const userSummary = useMemo(() => {
+    const list = users || [];
+    return {
+      total: list.length,
+      admins: list.filter((u: any) => u.role === "ADMIN").length,
+      pro: list.filter((u: any) => u.isSubscribed).length,
+      suspended: list.filter((u: any) => u.status === "SUSPENDED").length,
+    };
+  }, [users]);
+
   const filteredUsers = useMemo(() => {
     if (!users) return [];
     return users.filter((u: any) => {
@@ -210,129 +231,130 @@ export default function UsersManagement() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200 pb-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900">
-            Users & Subscriptions
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#141010]">
+            Users &amp; Subscriptions
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Manage user accounts, Kinde RBAC roles (Admin / User), and subscription billing states.
+          <p className="mt-0.5 text-xs sm:text-sm text-zinc-500">
+            Manage user accounts, Kinde RBAC roles (Admin / User), and
+            subscription billing states.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <Button
-            variant="outline"
-            size="sm"
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
             onClick={invalidateAll}
             disabled={isFetching}
-            className="h-9 gap-1.5 bg-white border-zinc-200 text-zinc-700"
+            className={ORANGE_OUTLINE_BTN_CLASS}
           >
             <RefreshCw
               className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
             />
             Refresh
-          </Button>
-          <Button
-            size="sm"
+          </button>
+          <button
+            type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="h-9 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+            className={ORANGE_BTN_CLASS}
           >
             <UserPlus className="h-4 w-4" />
             Add User
-          </Button>
+          </button>
         </div>
       </div>
 
-      {/* Filters & Search Toolbar */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm space-y-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-            <Input
-              placeholder="Search by email, name, or Kinde ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9 text-sm"
-            />
-          </div>
-
-          {/* Filter Pills */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Role Filter */}
-            <div className="flex items-center rounded-lg bg-zinc-100 p-0.5 border border-zinc-200">
-              {(["ALL", "ADMIN", "USER"] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRoleFilter(r)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition",
-                    roleFilter === r
-                      ? "bg-white text-blue-600 shadow-sm font-semibold"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  )}
-                >
-                  {r === "ALL" ? "All Roles" : r}
-                </button>
-              ))}
-            </div>
-
-            {/* Plan Filter */}
-            <div className="flex items-center rounded-lg bg-zinc-100 p-0.5 border border-zinc-200">
-              {(["ALL", "SUBSCRIBED", "FREE"] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPlanFilter(p)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition",
-                    planFilter === p
-                      ? "bg-white text-blue-600 shadow-sm font-semibold"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  )}
-                >
-                  {p === "ALL"
-                    ? "All Plans"
-                    : p === "SUBSCRIBED"
-                    ? "Paid / Pro"
-                    : "Free"}
-                </button>
-              ))}
-            </div>
-
-            {/* Status Filter */}
-            <div className="flex items-center rounded-lg bg-zinc-100 p-0.5 border border-zinc-200">
-              {(["ALL", "ACTIVE", "SUSPENDED"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition",
-                    statusFilter === s
-                      ? "bg-white text-blue-600 shadow-sm font-semibold"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  )}
-                >
-                  {s === "ALL" ? "All Status" : s}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <AdminStatCard
+          title="All Users"
+          value={userSummary.total}
+          subtitle="Registered QuillDocs accounts"
+          icon={Users}
+        />
+        <AdminStatCard
+          title="Paid / Pro Plans"
+          value={userSummary.pro}
+          valueClassName="text-emerald-600"
+          subtitle="Subscribed accounts"
+          icon={Gem}
+        />
+        <AdminStatCard
+          title="Admin Accounts"
+          value={userSummary.admins}
+          subtitle="Kinde RBAC privileged users"
+          icon={ShieldCheck}
+        />
+        <AdminStatCard
+          title="Suspended Accounts"
+          value={userSummary.suspended}
+          valueClassName={
+            userSummary.suspended > 0 ? "text-red-600" : undefined
+          }
+          subtitle="Restricted user access"
+          icon={Ban}
+        />
       </div>
 
       {/* Users Table */}
       {isLoading ? (
-        <Skeleton height={360} className="rounded-xl" />
+        <Skeleton height={360} borderRadius={17} />
       ) : (
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
+        <div className={cn(ORANGE_CARD_CLASS, "overflow-hidden")}>
+          <div className={ORANGE_CARD_HEADER_CLASS}>
+            <div className="flex flex-wrap items-center gap-2">
+              <AdminFilterPills
+                value={planFilter}
+                onChange={setPlanFilter}
+                options={[
+                  { label: "All Users", value: "ALL", count: userSummary.total },
+                  {
+                    label: "Paid / Pro",
+                    value: "SUBSCRIBED",
+                    count: userSummary.pro,
+                  },
+                  {
+                    label: "Free Tier",
+                    value: "FREE",
+                    count: Math.max(0, userSummary.total - userSummary.pro),
+                  },
+                ]}
+              />
+
+              <AdminFilterPills
+                value={roleFilter}
+                onChange={setRoleFilter}
+                options={[
+                  { label: "All Roles", value: "ALL" },
+                  { label: "Admin", value: "ADMIN" },
+                  { label: "User", value: "USER" },
+                ]}
+              />
+
+              <AdminFilterPills
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { label: "All Status", value: "ALL" },
+                  { label: "Active", value: "ACTIVE" },
+                  { label: "Suspended", value: "SUSPENDED" },
+                ]}
+              />
+            </div>
+          </div>
+
+          <AdminTableControls
+            showingLabel={`Showing ${filteredUsers.length} of ${userSummary.total} users`}
+            searchPlaceholder="Search email, name, or Kinde ID..."
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-zinc-200 bg-zinc-50/80 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                <tr className={ORANGE_TABLE_HEAD_ROW_CLASS}>
                   <th className="py-3.5 px-5">User / Kinde ID</th>
                   <th className="py-3.5 px-4">RBAC Role</th>
                   <th className="py-3.5 px-4">Subscription Plan</th>
@@ -341,7 +363,7 @@ export default function UsersManagement() {
                   <th className="py-3.5 px-5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 text-sm">
+              <tbody className="text-sm">
                 {filteredUsers.length === 0 ? (
                   <tr>
                     <td
@@ -353,19 +375,16 @@ export default function UsersManagement() {
                   </tr>
                 ) : (
                   filteredUsers.map((u: any) => (
-                    <tr
-                      key={u.id}
-                      className="hover:bg-zinc-50/70 transition-colors"
-                    >
+                    <tr key={u.id} className={ORANGE_TABLE_BODY_ROW_CLASS}>
                       {/* User Details */}
                       <td className="py-4 px-5">
                         <div className="flex items-center gap-3">
                           <div
                             className={cn(
-                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-xs border",
+                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-xs",
                               u.role === "ADMIN"
-                                ? "bg-blue-50 text-blue-700 border-blue-200"
-                                : "bg-zinc-100 text-zinc-700 border-zinc-200"
+                                ? "bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] text-white"
+                                : "bg-[#f4f6f9] text-[#141010] border border-[#ebebeb]"
                             )}
                           >
                             {(u.name || u.email || "U")
@@ -373,7 +392,7 @@ export default function UsersManagement() {
                               .toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <p className="font-semibold text-zinc-900 truncate">
+                            <p className="font-semibold text-[#141010] truncate">
                               {u.name}
                             </p>
                             <p className="text-xs text-zinc-500 truncate">
@@ -392,12 +411,12 @@ export default function UsersManagement() {
                           className={cn(
                             "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
                             u.role === "ADMIN"
-                              ? "bg-blue-100 text-blue-700 border border-blue-200"
+                              ? "bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] text-white"
                               : "bg-zinc-100 text-zinc-700 border border-zinc-200"
                           )}
                         >
                           {u.role === "ADMIN" ? (
-                            <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
+                            <ShieldCheck className="h-3.5 w-3.5 text-white" />
                           ) : (
                             <Shield className="h-3.5 w-3.5 text-zinc-500" />
                           )}
@@ -437,8 +456,8 @@ export default function UsersManagement() {
                       {/* Usage */}
                       <td className="py-4 px-4">
                         <div className="flex flex-col gap-1 text-xs text-zinc-600">
-                          <span className="inline-flex items-center gap-1 font-medium text-zinc-800">
-                            <FileText className="h-3.5 w-3.5 text-blue-600" />
+                          <span className="inline-flex items-center gap-1 font-medium text-[#141010]">
+                            <FileText className="h-3.5 w-3.5 text-[#FE1B03]" />
                             {u.filesCount} / {u.planQuota} files
                           </span>
                           <span className="inline-flex items-center gap-1 text-zinc-500">
@@ -470,35 +489,32 @@ export default function UsersManagement() {
                       {/* Actions */}
                       <td className="py-4 px-5 text-right">
                         <div className="inline-flex items-center justify-end gap-1.5">
-                          <Button
-                            variant="outline"
-                            size="sm"
+                          <button
+                            type="button"
                             onClick={() => openSubModal(u)}
-                            className="h-8 px-2.5 text-xs gap-1 border-zinc-200 text-zinc-700 hover:text-blue-600 hover:border-blue-200"
+                            className="inline-flex items-center gap-1 rounded-full border border-[#ebebeb] bg-white px-3 py-1.5 text-xs font-medium text-[#141010] hover:border-[#FF6F43] hover:text-[#FE1B03] transition-colors"
                             title="Manage Subscription & Plan"
                           >
-                            <CreditCard className="h-3.5 w-3.5 text-blue-600" />
+                            <CreditCard className="h-3.5 w-3.5 text-[#FE1B03]" />
                             Plan
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openEditModal(u)}
-                            className="h-8 px-2.5 text-xs gap-1 border-zinc-200 text-zinc-700"
+                            className="inline-flex items-center gap-1 rounded-full border border-[#ebebeb] bg-white px-3 py-1.5 text-xs font-medium text-[#141010] hover:border-[#FF6F43] hover:text-[#FE1B03] transition-colors"
                             title="Edit User & Role"
                           >
                             <Edit3 className="h-3.5 w-3.5" />
                             Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => setDeletingUser(u)}
-                            className="h-8 px-2 text-xs border-zinc-200 text-red-600 hover:bg-red-50 hover:border-red-200"
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-[#ebebeb] bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
                             title="Delete User"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -624,7 +640,7 @@ export default function UsersManagement() {
               <Button
                 type="submit"
                 disabled={createUserMutation.isLoading}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] hover:opacity-95 text-white rounded-full"
               >
                 {createUserMutation.isLoading && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -733,7 +749,7 @@ export default function UsersManagement() {
                 <Button
                   type="submit"
                   disabled={updateUserMutation.isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] hover:opacity-95 text-white rounded-full"
                 >
                   {updateUserMutation.isLoading && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -868,7 +884,7 @@ export default function UsersManagement() {
                           durationDays: subDurationDays,
                         })
                       }
-                      className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                      className="bg-gradient-to-b from-[#FF6F43] to-[#FE1B03] hover:opacity-95 text-white gap-1.5 rounded-full"
                     >
                       {manageSubMutation.isLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

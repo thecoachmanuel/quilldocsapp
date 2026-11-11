@@ -175,7 +175,7 @@ export default function DocumentViewLayout({
               ? "lg:flex lg:w-full lg:flex-1 lg:h-full lg:border-x lg:border-gray-200 lg:transition-all lg:duration-300"
               : "lg:flex lg:w-96 lg:shrink-0 lg:flex-[0.75] lg:h-full lg:border-l lg:border-gray-200 lg:transition-all lg:duration-300",
             // Mobile floating modal styles (always stacked above z-[65] backdrop so modal is crisp and interactive)
-            "max-lg:fixed max-lg:inset-x-0 max-lg:shadow-[0_-10px_35px_rgba(0,0,0,0.2)] max-lg:overflow-hidden",
+            "max-lg:fixed max-lg:inset-x-0 max-lg:w-full max-lg:max-w-full max-lg:shadow-[0_-10px_35px_rgba(0,0,0,0.2)] max-lg:overflow-hidden",
             isKeyboardVisible
               ? "max-lg:z-[80] max-lg:rounded-none max-lg:border-t-0 max-lg:transition-none"
               : cn(
@@ -288,7 +288,7 @@ export default function DocumentViewLayout({
           </div>
 
           {/* Chat Content Container */}
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden flex flex-col">
             <ChatWrapper
               fileId={fileId}
               isExpanded={isChatExpanded}

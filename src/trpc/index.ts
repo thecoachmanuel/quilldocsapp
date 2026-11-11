@@ -464,12 +464,16 @@ export const appRouter = router({
   // =========================================================================
 
   adminGetOverview: adminProcedure.query(async () => {
-    const [allUsers, allFiles, allMessages, dynamicPlans] = await Promise.all([
-      db.user.findMany({ orderBy: { createdAt: "desc" } }),
-      db.file.findMany({ orderBy: { createdAt: "desc" } }),
-      db.message.findMany({ orderBy: { createdAt: "desc" } }),
-      getDynamicPlans(),
-    ]);
+    const [allUsers, allFiles, allMessages, dynamicPlans, unreadContactCount] =
+      await Promise.all([
+        db.user.findMany({ orderBy: { createdAt: "desc" } }),
+        db.file.findMany({ orderBy: { createdAt: "desc" } }),
+        db.message.findMany({ orderBy: { createdAt: "desc" } }),
+        getDynamicPlans(),
+        db.contactMessage
+          .count({ where: { status: "UNREAD" } })
+          .catch(() => 0),
+      ]);
 
     let subscribedCount = 0;
     let adminCount = 0;
@@ -552,6 +556,19 @@ export const appRouter = router({
         totalMessages: allMessages.length,
         userQuestionsCount,
         aiResponsesCount,
+        unreadContactCount,
+      },
+      activityEvents: {
+        userDates: allUsers
+          .map((u: any) =>
+            u.createdAt ? new Date(u.createdAt).toISOString() : null
+          )
+          .filter(Boolean) as string[],
+        fileDates: allFiles
+          .map((f: any) =>
+            f.createdAt ? new Date(f.createdAt).toISOString() : null
+          )
+          .filter(Boolean) as string[],
       },
       recentUsers: enrichedUsers.slice(0, 6),
       recentFiles: allFiles.slice(0, 6).map((f: any) => {

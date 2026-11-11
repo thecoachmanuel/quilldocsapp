@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { forwardRef, useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
 import { dispatchPageJump } from "@/lib/page-jump";
+import { copyMessageForWord } from "@/lib/word-clipboard";
 
 export interface DocSourceRef {
   id?: string;
@@ -320,14 +321,6 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
   ) => {
     const [hasCopied, setHasCopied] = useState<boolean>(false);
 
-    const handleCopy = () => {
-      if (typeof message.text === "string") {
-        navigator.clipboard.writeText(message.text);
-        setHasCopied(true);
-        setTimeout(() => setHasCopied(false), 2000);
-      }
-    };
-
     const parsed: ParsedMessageCitations =
       typeof message.text === "string" && !message.isUserMessage
         ? formatMessageCitations(message.text, docSources)
@@ -339,14 +332,29 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
 
     const { formattedText, effectiveSources, citedIndices } = parsed;
 
+    const handleCopy = async () => {
+      if (typeof message.text === "string") {
+        const copied = await copyMessageForWord(message.text, {
+          effectiveSources,
+          citedIndices,
+        });
+        if (copied) {
+          setHasCopied(true);
+          setTimeout(() => setHasCopied(false), 2000);
+        }
+      }
+    };
+
     return (
       <div
         ref={ref}
+        data-chat-message="true"
         className={cn("flex items-end gap-2 w-full max-w-full min-w-0", {
           "justify-end": message.isUserMessage,
         })}
       >
         <div
+          data-copy-ignore="true"
           className={cn(
             "relative flex h-6 w-6 aspect-square items-center justify-center shrink-0",
             {
@@ -382,6 +390,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
           )}
         >
           <div
+            data-chat-message-content="true"
             className={cn(
               "px-3.5 sm:px-4 py-2.5 rounded-lg inline-block w-fit max-w-full min-w-0 overflow-hidden transition-all duration-200",
               {
@@ -415,6 +424,8 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       return (
                         <button
                           type="button"
+                          data-copy-citation="true"
+                          data-copy-brackets="true"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -430,7 +441,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                               })
                             );
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-[11px] font-semibold bg-blue-100/90 hover:bg-blue-200 text-blue-800 border border-blue-300/80 transition-all cursor-pointer not-prose align-baseline active:scale-95 select-none"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-[11px] font-semibold bg-blue-100/90 hover:bg-blue-200 text-blue-800 border border-blue-300/80 transition-all cursor-pointer not-prose align-baseline active:scale-95"
                           title={
                             source?.name
                               ? validPage
@@ -463,6 +474,8 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       return (
                         <button
                           type="button"
+                          data-copy-citation="true"
+                          data-copy-brackets="true"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -476,10 +489,14 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                               })
                             );
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 select-none max-w-full min-w-0"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 max-w-full min-w-0"
                           title={`Switch to ${docName} - ${type} ${num}`}
                         >
-                          <FileText className="h-3 w-3 text-blue-600 shrink-0" />
+                          <FileText
+                            aria-hidden="true"
+                            data-copy-ignore="true"
+                            className="h-3 w-3 text-blue-600 shrink-0"
+                          />
                           <span className="truncate">{children}</span>
                         </button>
                       );
@@ -492,6 +509,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       return (
                         <button
                           type="button"
+                          data-copy-citation="true"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -525,10 +543,14 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                               });
                             }
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 select-none"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95"
                           title={`Jump to ${type} ${num}`}
                         >
-                          <FileText className="h-3 w-3 text-blue-600 shrink-0" />
+                          <FileText
+                            aria-hidden="true"
+                            data-copy-ignore="true"
+                            className="h-3 w-3 text-blue-600 shrink-0"
+                          />
                           <span>{children}</span>
                         </button>
                       );
@@ -557,8 +579,14 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
             {!message.isUserMessage &&
               effectiveSources.length > 1 &&
               citedIndices.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-zinc-300/80 flex flex-wrap items-center gap-1.5 not-prose min-w-0 max-w-full">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mr-0.5">
+                <div
+                  data-copy-sources="true"
+                  className="mt-2 pt-2 border-t border-zinc-300/80 flex flex-wrap items-center gap-1.5 not-prose min-w-0 max-w-full"
+                >
+                  <span
+                    data-copy-ignore="true"
+                    className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mr-0.5"
+                  >
                     Sources:
                   </span>
                   {citedIndices.map((docIdx) => {
@@ -568,6 +596,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       <button
                         key={`${docIdx}-${src.name}`}
                         type="button"
+                        data-copy-source-item={`[${docIdx}] ${src.name}`}
                         onClick={() => {
                           window.dispatchEvent(
                             new CustomEvent("quill:jump-to-doc", {
@@ -593,6 +622,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
 
             {message.id !== "loading-message" ? (
               <div
+                data-copy-ignore="true"
                 className={cn(
                   "text-xs select-none mt-2 w-full flex items-center justify-between gap-2",
                   {

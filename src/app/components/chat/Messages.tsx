@@ -7,6 +7,7 @@ import { useContext, useEffect, useRef } from "react";
 import { ChatContext } from "./ChatContext";
 import { useIntersection } from "@mantine/hooks";
 import { cn } from "@/lib/utils";
+import { handleChatSelectionCopy } from "@/lib/word-clipboard";
 
 interface MessagesProps {
   fileId: string;
@@ -83,8 +84,12 @@ function Messages({
   }, [entry, fetchNextPage]);
 
   return (
-    <div className="flex flex-1 min-h-0 min-w-0 w-full max-w-full h-full border-zinc-200 flex-col-reverse overflow-y-auto overflow-x-hidden scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch">
+    <div
+      onCopy={handleChatSelectionCopy}
+      className="flex flex-1 min-h-0 min-w-0 w-full max-w-full h-full border-zinc-200 flex-col-reverse overflow-y-auto overflow-x-hidden scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
+    >
       <div
+        data-messages-order="reverse"
         className={cn(
           "w-full max-w-full min-w-0 flex flex-col-reverse gap-4 transition-all duration-300",
           effectiveExpanded

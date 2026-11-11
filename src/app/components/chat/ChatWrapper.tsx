@@ -17,6 +17,7 @@ interface ChatWrapperProps {
   isExpanded?: boolean;
   planName?: string;
   pagesPerPdf?: number;
+  isAdminInspecting?: boolean;
 }
 
 function AutoMultiDocBanner({ hasExplicitMulti }: { hasExplicitMulti: boolean }) {
@@ -55,6 +56,7 @@ function ChatWrapper({
   isExpanded = false,
   planName = "Free",
   pagesPerPdf = 5,
+  isAdminInspecting = false,
 }: ChatWrapperProps) {
   const [forceReady, setForceReady] = useState(false);
 
@@ -116,19 +118,50 @@ function ChatWrapper({
       </div>
     );
 
-  if (data?.status === "FAILED")
+  if (data?.status === "FAILED" && !forceReady)
     return (
       <div className="relative h-full max-h-full w-full max-w-full min-w-0 bg-zinc-50 flex flex-col justify-between overflow-hidden">
         <div className="flex-1 min-h-0 overflow-y-auto flex justify-center items-start sm:items-center p-4 sm:p-6">
-          <LimitUpgradePrompt
-            variant="card"
-            limitType="pages"
-            reasonTitle="Document exceeds plan limit"
-            reasonDescription={`Your ${planName} plan supports documents up to ${pagesPerPdf} pages or slides.`}
-            currentPlanName={planName}
-            backHref="/dashboard"
-            backLabel="Back to Files"
-          />
+          {isAdminInspecting ? (
+            <div className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-5 text-center shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                Admin Inspect Mode
+              </p>
+              <h3 className="mt-1 font-semibold text-base text-zinc-900">
+                Document Upload Status: FAILED
+              </h3>
+              <p className="mt-1.5 text-sm text-zinc-600">
+                This file was flagged as exceeding user plan limits during
+                processing. You can still inspect the document or open the AI
+                chat context directly.
+              </p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setForceReady(true)}
+                  className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition"
+                >
+                  Open AI Chat Anyway
+                </button>
+                <Link
+                  href="/admin/documents"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition"
+                >
+                  Back to Admin Documents
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <LimitUpgradePrompt
+              variant="card"
+              limitType="pages"
+              reasonTitle="Document exceeds plan limit"
+              reasonDescription={`Your ${planName} plan supports documents up to ${pagesPerPdf} pages or slides.`}
+              currentPlanName={planName}
+              backHref="/dashboard"
+              backLabel="Back to Files"
+            />
+          )}
         </div>
         <ChatInput isDisabled />
       </div>

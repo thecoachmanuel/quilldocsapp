@@ -66,7 +66,7 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
                     textarearef.current?.focus();
                   }
                 }}
-                placeholder="Enter your question..."
+                placeholder="Ask a question or request any language..."
                 className="w-full min-w-0 resize-none pr-12 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
               />
               <Button

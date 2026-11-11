@@ -1,7 +1,7 @@
 import DocumentViewLayout from "@/app/components/DocumentViewLayout";
 import { db } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
-import { ensureDbUser } from "@/lib/auth-rbac";
+import { getUserSessionWithRBAC } from "@/lib/auth-rbac";
 import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { notFound, redirect } from "next/navigation";
 
@@ -32,35 +32,49 @@ async function Page({ params }: PageProps) {
     redirect(`/dashboard/multi?files=${fileId}`);
   }
 
-  const { getUser } = getKindeServerSession();
-  const user = await getUser();
+  const rbac = await getUserSessionWithRBAC();
 
-  if (!user || !user.id) {
+  if (!rbac.isAuthenticated || !rbac.user?.id) {
     redirect(`/api/auth/login?post_login_redirect_url=/dashboard/${fileId}`);
   }
 
-  await ensureDbUser(user);
-  const [file, allUserFiles, subscriptionPlan] = await Promise.all([
+  const user = rbac.user;
+
+  const [file, subscriptionPlan] = await Promise.all([
     db.file.findFirst({
-      where: {
-        id: fileId,
-        userId: user.id,
-      },
-    }),
-    db.file.findMany({
-      where: {
-        userId: user.id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      where: rbac.isAdmin
+        ? { id: fileId }
+        : {
+            id: fileId,
+            userId: user.id,
+          },
     }),
     getUserSubscriptionPlan(),
   ]);
 
   if (!file) notFound();
 
-  const sanitizedUserFiles = allUserFiles.map((f: any) => ({
+  const isAdminInspecting = rbac.isAdmin && file.userId !== user.id;
+
+  const [ownerFiles, ownerRecord] = await Promise.all([
+    db.file.findMany({
+      where: {
+        userId: file.userId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    }),
+    isAdminInspecting
+      ? db.user.findFirst({ where: { id: file.userId } })
+      : Promise.resolve(null),
+  ]);
+
+  const ownerLabel = isAdminInspecting
+    ? ownerRecord?.name || ownerRecord?.email || file.userId
+    : undefined;
+
+  const sanitizedUserFiles = ownerFiles.map((f: any) => ({
     id: f.id,
     name: f.name,
   }));
@@ -73,6 +87,8 @@ async function Page({ params }: PageProps) {
       userFiles={sanitizedUserFiles}
       planName={subscriptionPlan.name}
       pagesPerPdf={subscriptionPlan.pagesPerPdf}
+      isAdminInspecting={isAdminInspecting}
+      ownerLabel={ownerLabel}
     />
   );
 }

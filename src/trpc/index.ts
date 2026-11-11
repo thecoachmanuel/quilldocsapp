@@ -317,10 +317,12 @@ export const appRouter = router({
       }
 
       const file = await db.file.findFirst({
-        where: {
-          id: input.fileId,
-          userId: ctx.userId,
-        },
+        where: ctx.isAdmin
+          ? { id: input.fileId }
+          : {
+              id: input.fileId,
+              userId: ctx.userId,
+            },
       });
 
       if (!file) return { status: "PENDING" as const };
@@ -344,12 +346,14 @@ export const appRouter = router({
   getFile: privateProcedure
     .input(z.object({ key: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const { userId } = ctx;
+      const { userId, isAdmin } = ctx;
       const file = await db.file.findFirst({
-        where: {
-          key: input.key,
-          userId,
-        },
+        where: isAdmin
+          ? { key: input.key }
+          : {
+              key: input.key,
+              userId,
+            },
       });
 
       if (!file) throw new TRPCError({ code: "NOT_FOUND" });
@@ -408,19 +412,24 @@ export const appRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      const { userId } = ctx;
+      const { userId, isAdmin } = ctx;
       const { fileId, cursor } = input;
       const limit = input.limit ?? INFINITE_QUERY_LIMIT;
 
+      let inspectedOwnerId: string | null = null;
+
       if (!fileId.startsWith("multi_")) {
         const file = await db.file.findFirst({
-          where: {
-            id: fileId,
-            userId,
-          },
+          where: isAdmin
+            ? { id: fileId }
+            : {
+                id: fileId,
+                userId,
+              },
         });
         if (!file) throw new TRPCError({ code: "NOT_FOUND" });
-      } else {
+        inspectedOwnerId = file.userId;
+      } else if (!isAdmin) {
         const userFiles = await db.file.findMany({
           where: { userId },
         });
@@ -434,10 +443,17 @@ export const appRouter = router({
       }
       const messages = await db.message.findMany({
         take: limit + 1,
-        where: {
-          fileId,
-          userId,
-        },
+        where: isAdmin
+          ? inspectedOwnerId && inspectedOwnerId !== userId
+            ? {
+                fileId,
+                userId: { in: [userId, inspectedOwnerId] },
+              }
+            : { fileId }
+          : {
+              fileId,
+              userId,
+            },
         orderBy: {
           createdAt: "desc",
         },

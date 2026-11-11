@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { getKindeServerSession } from "@/lib/kinde";
+import { getUserSessionWithRBAC } from "@/lib/auth-rbac";
 import { parseDocument, getFileType } from "@/lib/document-parser";
 import { getDocumentBuffer } from "@/lib/document-storage";
 import { NextRequest, NextResponse } from "next/server";
@@ -10,10 +10,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    const { getUser } = getKindeServerSession();
-    const user = await getUser();
+    const rbac = await getUserSessionWithRBAC();
 
-    if (!user || !user.id) {
+    if (!rbac.isAuthenticated || !rbac.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -29,10 +28,12 @@ export async function GET(req: NextRequest) {
     }
 
     const file = await db.file.findFirst({
-      where: {
-        id: fileId,
-        userId: user.id,
-      },
+      where: rbac.isAdmin
+        ? { id: fileId }
+        : {
+            id: fileId,
+            userId: rbac.user.id,
+          },
     });
 
     if (!file) {

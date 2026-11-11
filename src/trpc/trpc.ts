@@ -1,24 +1,22 @@
-import { getKindeServerSession } from "@/lib/kinde";
-import { getUserSessionWithRBAC, ensureDbUser } from "@/lib/auth-rbac";
+import { getUserSessionWithRBAC } from "@/lib/auth-rbac";
 import { TRPCError, initTRPC } from "@trpc/server";
 
 const t = initTRPC.create();
 const middleware = t.middleware;
 
 const isAuth = middleware(async (opts) => {
-  const { getUser } = getKindeServerSession();
-  const user = await getUser();
+  const rbac = await getUserSessionWithRBAC();
 
-  if (!user || !user.id) {
+  if (!rbac.isAuthenticated || !rbac.user?.id) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 
-  await ensureDbUser(user);
-
   return opts.next({
     ctx: {
-      userId: user.id,
-      user,
+      userId: rbac.user.id,
+      user: rbac.user,
+      role: rbac.role,
+      isAdmin: rbac.isAdmin,
     },
   });
 });

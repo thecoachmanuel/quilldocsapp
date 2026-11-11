@@ -2,7 +2,7 @@ import Link from "next/link";
 import MaxWidthWrapper from "./components/MaxWidthWrapper";
 import Footer from "./components/Footer";
 import { buttonVariants } from "@/components/ui/button";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Globe } from "lucide-react";
 import Image from "next/image";
 
 export default function Home() {
@@ -19,9 +19,16 @@ export default function Home() {
           seconds.
         </h1>
         <p className="mt-5 max-w-prose text-zinc-700 sm:text-lg">
-          QuillDocs allows you to have conversations with any PDF, Word document, or
-          PowerPoint presentation. Simply upload your file and start asking questions right away.
+          QuillDocs lets you upload any PDF, Word document, or PowerPoint
+          presentation in <strong>any language</strong>—and ask our AI tutor to
+          teach and explain it to you in <strong>any language</strong> you
+          prefer.
         </p>
+
+        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/80 px-3.5 py-1 text-xs sm:text-sm font-medium text-blue-700">
+          <Globe className="h-4 w-4 shrink-0 text-blue-600" />
+          <span>Upload in any language &bull; Learn in any language</span>
+        </div>
 
         <Link
           className={buttonVariants({
@@ -121,11 +128,11 @@ export default function Home() {
             <div className="flex flex-col space-y-2 border-l-4 border-zinc-300 py-2 pl-4 md:border-l-0 md:border-t-2 md:pb-0 md:pl-0 md:pt-4">
               <span className="text-sm font-medium text-blue-600">Step 2</span>
               <span className="text-xl font-semibold ">
-                Upload your document
+                Upload any document, in any language
               </span>
               <span className="mt-2 text-zinc-700">
-                We&apos;ll process your file and make it ready for you to chat
-                with.
+                Drop your PDF, Word, or PowerPoint file in whatever language it
+                was written—we&apos;ll process it in seconds.
               </span>
             </div>
           </li>
@@ -134,11 +141,11 @@ export default function Home() {
             <div className="flex flex-col space-y-2 border-l-4 border-zinc-300 py-2 pl-4 md:border-l-0 md:border-t-2 md:pb-0 md:pl-0 md:pt-4">
               <span className="text-sm font-medium text-blue-600">Step 3</span>
               <span className="text-xl font-semibold ">
-                Start asking questions
+                Let your AI tutor teach in any language
               </span>
               <span className="mt-2 text-zinc-700">
-                It&apos;s that simple. Try out QuillDocs today - it really takes less
-                than a minute.
+                Ask questions or request step-by-step tutoring in English,
+                French, Yoruba, Arabic, Spanish, or any language you choose.
               </span>
             </div>
           </li>

@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { SendMessageValidator } from "@/lib/validators/SendMessageValidator";
-import { getKindeServerSession } from "@/lib/kinde";
+import { getUserSessionWithRBAC } from "@/lib/auth-rbac";
 import { getUserSubscriptionPlan } from "@/lib/subscription";
 import { pinecone, isPineconeConfigured } from "@/lib/pinecone";
 import { OpenAIEmbeddings } from "langchain/embeddings/openai";
@@ -28,11 +28,11 @@ interface PerDocContextResult {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { getUser } = getKindeServerSession();
-    const user = await getUser();
+    const rbac = await getUserSessionWithRBAC();
+    const user = rbac.user;
     const userId = user?.id;
 
-    if (!userId) {
+    if (!rbac.isAuthenticated || !userId) {
       console.log("[message/route] Unauthorized: No user found");
       return new Response("Unauthorized", { status: 401 });
     }
@@ -66,14 +66,43 @@ export async function POST(req: NextRequest) {
       activeFiles = explicitFileIds
         .map((id) => fileById.get(id))
         .filter(Boolean);
+
+      if (activeFiles.length < explicitFileIds.length && rbac.isAdmin) {
+        const fetched = await db.file.findMany({
+          where: { id: { in: explicitFileIds } },
+        });
+        const adminMap = new Map(fetched.map((f: any) => [f.id, f]));
+        activeFiles = explicitFileIds
+          .map((id) => adminMap.get(id))
+          .filter(Boolean);
+      }
     } else if (isMultiSession) {
       // File IDs may themselves contain "_", so match each owned ID with delimiter guards
       const sessionBody = `_${fileId.slice("multi_".length)}_`;
       activeFiles = allUserFiles.filter((f: any) =>
         sessionBody.includes(`_${f.id}_`)
       );
+
+      if (activeFiles.length === 0 && rbac.isAdmin) {
+        const recentGlobal = await db.file.findMany({
+          orderBy: { createdAt: "desc" },
+          take: 250,
+        });
+        activeFiles = recentGlobal.filter((f: any) =>
+          sessionBody.includes(`_${f.id}_`)
+        );
+      }
     } else {
       activeFiles = allUserFiles.filter((f: any) => f.id === fileId);
+
+      if (activeFiles.length === 0 && rbac.isAdmin) {
+        const inspectedFile = await db.file.findFirst({
+          where: { id: fileId },
+        });
+        if (inspectedFile) {
+          activeFiles = [inspectedFile];
+        }
+      }
     }
 
     if (activeFiles.length === 0) {
@@ -81,13 +110,27 @@ export async function POST(req: NextRequest) {
       return new Response("Files not found", { status: 404 });
     }
 
+    const ownerIdForContext = activeFiles[0]?.userId || userId;
+    const isAdminInspecting = rbac.isAdmin && ownerIdForContext !== userId;
+    const libraryFiles = isAdminInspecting
+      ? await db.file.findMany({
+          where: { userId: ownerIdForContext },
+          orderBy: { createdAt: "desc" },
+        })
+      : allUserFiles;
+
     // Retrieve the most recent conversation history BEFORE saving the new message
     // (avoids duplicating the current prompt and preserves newest turns)
     const rawRecentMessages = await db.message.findMany({
-      where: {
-        fileId,
-        userId,
-      },
+      where: isAdminInspecting
+        ? {
+            fileId,
+            userId: { in: [userId, ownerIdForContext] },
+          }
+        : {
+            fileId,
+            userId,
+          },
       orderBy: {
         createdAt: "desc",
       },
@@ -106,7 +149,7 @@ export async function POST(req: NextRequest) {
         message,
         prevMessages: recentHistory,
         primaryFile: activeFiles[0],
-        allUserFiles,
+        allUserFiles: libraryFiles,
         maxAutoFiles: isPro ? 6 : 4,
       });
 
@@ -353,7 +396,7 @@ export async function POST(req: NextRequest) {
       })
       .join("\n");
 
-    const unloadedLibraryFiles = allUserFiles.filter(
+    const unloadedLibraryFiles = libraryFiles.filter(
       (f: any) =>
         f.uploadStatus !== "FAILED" &&
         !activeFiles.some((active: any) => active.id === f.id)
@@ -380,8 +423,10 @@ export async function POST(req: NextRequest) {
       ? `\n- Multi-Doc Auto-Activation: The user initiated this question from a single-document view, and you automatically brought in their relevant uploaded document(s) so you can answer seamlessly across all of them.`
       : "";
 
+    const multilingualTutorRule = `- Multilingual Document Understanding & Any-Language Tutoring: Users may upload documents written in ANY language and ask you to teach, explain, translate, or summarize them in ANY language (for example: uploading a French, Arabic, Chinese, Spanish, or Yoruba document and asking to be taught in English, Yoruba, Hausa, Igbo, French, Spanish, Arabic, etc.). Always teach in the exact language the user writes in or requests, breaking down concepts clearly step-by-step like a patient private tutor while keeping key terms and citations accurate.`;
+
     const systemPrompt = isMultiDoc
-      ? `You are Quill, an expert AI research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
+      ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
       }).
 You are analyzing ${perDocResults.length} participating documents simultaneously:
 ${docInventoryLines}${unloadedLibraryNote}
@@ -391,10 +436,11 @@ Your strict instructions:
 - Attribution Accuracy: Keep facts cleanly attributed to the exact document they come from—never blend or misattribute details between documents.
 - Simple Compact Citations: Cite claims using ONLY concise numbered tags like [1 · p.3] (Page 3 of Document [1]) or [2 · s.5] (Slide 5 of Document [2]). Cite multiple sources side-by-side cleanly as [1 · p.3] [2 · s.5]. Do NOT write long filenames inside citation brackets, and never cite a page/slide higher than a document's stated total.
 - Single-Source Questions in Multi-Doc Mode: If a question only appears in some of the documents, state clearly which document(s) contain the answer and which do not.
+${multilingualTutorRule}
 - Library Awareness: If the user asks about another library file listed above that is NOT loaded, tell them its exact name and suggest clicking "Add Document" / asking directly by filename.${autoMultiNote}
 - Ground all facts strictly in the provided document contexts.`
       : isPro
-        ? `You are Quill, an advanced expert AI document tutor operating in PRO High-Quality mode.
+        ? `You are Quill, an advanced expert multilingual AI document tutor operating in PRO High-Quality mode.
 Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.totalPages
           ? ` (${primaryResult.totalPages
           } ${primaryResult.unitLabel.toLowerCase()}${primaryResult.totalPages === 1 ? "" : "s"
@@ -402,14 +448,15 @@ Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.t
           : ""
         }${unloadedLibraryNote}
 
-Your goal is to provide exceptional, comprehensive, and deeply analytical insights from the provided document:
+Your goal is to provide exceptional, comprehensive, and deeply analytical tutoring from the provided document:
 - Deliver thorough, structured explanations with key takeaways, deep technical context, and precise details.
+${multilingualTutorRule}
 - Formatting & Citations: Always format with clean Markdown. Include clickable citations like [${primaryResult?.unitLabel || "Page"
         } X] whenever available so the user can jump directly to the source.
 ${singlePageConstraint}
 - Other Documents Awareness: Stay focused on the current document unless the user explicitly asks about another uploaded document. If they ask about an unloaded library document listed above, mention it by name and let them know they can ask directly by its name or click "Add Docs" to enter Multi-Doc Chat.
 - Ground all facts strictly in the document context.`
-        : `You are Quill, an expert AI document assistant.
+        : `You are Quill, a helpful multilingual AI document tutor and assistant.
 Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.totalPages
           ? ` (${primaryResult.totalPages
           } ${primaryResult.unitLabel.toLowerCase()}${primaryResult.totalPages === 1 ? "" : "s"
@@ -417,8 +464,9 @@ Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.t
           : ""
         }${unloadedLibraryNote}
 
-Your goal is to help the user understand their uploaded document:
-- Provide clear, direct, and concise answers based strictly on the document context.
+Your goal is to help the user understand and learn from their uploaded document:
+- Provide clear, direct, and easy-to-follow explanations based strictly on the document context.
+${multilingualTutorRule}
 - Formatting & Citations: Use Markdown and cite references like [${primaryResult?.unitLabel || "Page"
         } X] where identifiable.
 ${singlePageConstraint}

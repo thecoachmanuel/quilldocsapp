@@ -2,9 +2,9 @@ import MultiDocumentViewLayout, {
   DocumentInfo,
 } from "@/app/components/MultiDocumentViewLayout";
 import { db } from "@/db";
-import { getKindeServerSession } from "@/lib/kinde";
+import { getUserSessionWithRBAC } from "@/lib/auth-rbac";
 import { getUserSubscriptionPlan } from "@/lib/subscription";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -18,10 +18,9 @@ interface PageProps {
 }
 
 export default async function MultiDocChatPage({ searchParams }: PageProps) {
-  const { getUser } = getKindeServerSession();
-  const user = await getUser();
+  const rbac = await getUserSessionWithRBAC();
 
-  if (!user || !user.id) {
+  if (!rbac.isAuthenticated || !rbac.user?.id) {
     redirect(
       `/api/auth/login?post_login_redirect_url=/dashboard/multi?files=${
         searchParams.files || ""
@@ -29,8 +28,15 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
     );
   }
 
-  // Retrieve all files belonging to this user and active plan limits
-  const [allUserFiles, subscriptionPlan] = await Promise.all([
+  const user = rbac.user;
+  const requestedParam = searchParams?.files || "";
+  const requestedIds =
+    requestedParam && requestedParam !== "all"
+      ? requestedParam.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+
+  // Retrieve user files; if admin inspects another user's document, scope to that owner's library
+  const [ownUserFiles, inspectedFirstFile, subscriptionPlan] = await Promise.all([
     db.file.findMany({
       where: {
         userId: user.id,
@@ -39,14 +45,31 @@ export default async function MultiDocChatPage({ searchParams }: PageProps) {
         createdAt: "desc",
       },
     }),
+    rbac.isAdmin && requestedIds.length > 0
+      ? db.file.findFirst({ where: { id: { in: requestedIds } } })
+      : Promise.resolve(null),
     getUserSubscriptionPlan(),
   ]);
+
+  const targetOwnerId =
+    rbac.isAdmin &&
+    inspectedFirstFile &&
+    inspectedFirstFile.userId !== user.id
+      ? inspectedFirstFile.userId
+      : user.id;
+
+  const allUserFiles =
+    targetOwnerId === user.id
+      ? ownUserFiles
+      : await db.file.findMany({
+          where: { userId: targetOwnerId },
+          orderBy: { createdAt: "desc" },
+        });
 
   if (allUserFiles.length === 0) {
     redirect("/dashboard");
   }
 
-  const requestedParam = searchParams?.files || "";
   let initialIds: string[] = [];
 
   if (requestedParam === "all") {

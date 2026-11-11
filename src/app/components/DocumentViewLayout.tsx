@@ -12,6 +12,8 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  ShieldCheck,
+  ChevronLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,6 +27,8 @@ interface DocumentViewLayoutProps {
   userFiles?: Array<{ id: string; name: string }>;
   planName?: string;
   pagesPerPdf?: number;
+  isAdminInspecting?: boolean;
+  ownerLabel?: string;
 }
 
 export default function DocumentViewLayout({
@@ -34,6 +38,8 @@ export default function DocumentViewLayout({
   userFiles = [],
   planName = "Free",
   pagesPerPdf = 5,
+  isAdminInspecting = false,
+  ownerLabel,
 }: DocumentViewLayoutProps) {
   const router = useRouter();
   const [isMobileChatOpen, setIsMobileChatOpen] = useState<boolean>(false);
@@ -108,6 +114,24 @@ export default function DocumentViewLayout({
 
   return (
     <div className="relative flex flex-col justify-start w-full max-w-full overflow-x-clip lg:flex-1 lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
+      {isAdminInspecting && (
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-1.5 bg-blue-50 border-b border-blue-200 text-xs shrink-0">
+          <div className="flex items-center gap-1.5 min-w-0 text-blue-900">
+            <ShieldCheck className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+            <span className="font-semibold shrink-0">Admin Inspect:</span>
+            <span className="truncate text-blue-800">
+              {ownerLabel ? `Uploaded by ${ownerLabel}` : "Viewing user document"}
+            </span>
+          </div>
+          <Link
+            href="/admin/documents"
+            className="inline-flex items-center gap-1 shrink-0 font-semibold text-blue-700 hover:text-blue-800 hover:underline"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            <span>Back to Admin</span>
+          </Link>
+        </div>
+      )}
       {/* Mobile Quick Bar - Compact header flush below navbar without sticky container offset */}
       <div className="lg:hidden flex items-center justify-between px-2.5 py-1 bg-white border-b border-zinc-200 w-full max-w-full shrink-0">
         <div className="flex items-center gap-1.5 min-w-0 pr-2">
@@ -294,6 +318,7 @@ export default function DocumentViewLayout({
               isExpanded={isChatExpanded}
               planName={planName}
               pagesPerPdf={pagesPerPdf}
+              isAdminInspecting={isAdminInspecting}
             />
           </div>
         </div>

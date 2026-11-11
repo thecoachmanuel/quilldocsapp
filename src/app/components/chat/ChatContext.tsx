@@ -13,6 +13,7 @@ type StreamResponse = {
   addMessage: () => void;
   message: string;
   handleInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  setInputValue: (value: string) => void;
   isLoading: boolean;
   isExpanded?: boolean;
   autoMultiDocs: AutoMultiDocInfo | null;
@@ -21,6 +22,7 @@ export const ChatContext = createContext<StreamResponse>({
   addMessage: () => {},
   message: "",
   handleInputChange: () => {},
+  setInputValue: () => {},
   isLoading: false,
   isExpanded: false,
   autoMultiDocs: null,
@@ -244,6 +246,7 @@ export const ChatContextProvider = ({
         addMessage,
         message,
         handleInputChange,
+        setInputValue: setMessage,
         isLoading,
         isExpanded,
         autoMultiDocs,

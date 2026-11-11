@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { getKindeServerSession, RegisterLink } from "@/lib/kinde";
 import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
 
-import { ArrowRight, Check, HelpCircle } from "lucide-react";
+import { ArrowRight, Check, HelpCircle, Globe } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +35,13 @@ async function Page() {
             Whether you&apos;re just trying out our service or need more,
             we&apos;ve got you covered.
           </p>
+          <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/80 px-3.5 py-1 text-xs sm:text-sm font-medium text-blue-700">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+            <span>
+              Upload documents in any language &bull; Learn with your AI tutor
+              in any language
+            </span>
+          </div>
         </div>
 
         <div

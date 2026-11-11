@@ -1,6 +1,6 @@
 import { trpc } from "@/app/_trpc/client";
 import { INFINITE_QUERY_LIMIT } from "@/config/infinite-query";
-import { Loader2, MessageSquare, Layers } from "lucide-react";
+import { Loader2, MessageSquare, Layers, Globe } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 import Message, { DocSourceRef } from "./Message";
 import { useContext, useEffect, useRef } from "react";
@@ -25,6 +25,7 @@ function Messages({
     isLoading: isAiThinking,
     isExpanded: contextExpanded,
     autoMultiDocs,
+    setInputValue,
   } = useContext(ChatContext);
   const effectiveExpanded = isExpanded || contextExpanded || false;
   const effectiveDocSources: DocSourceRef[] =
@@ -133,8 +134,8 @@ function Messages({
                   Multi-Doc Synthesis Ready
                 </h3>
                 <p className="text-zinc-500 text-sm max-w-xs">
-                  Ask to compare, summarize, or cross-reference across{" "}
-                  {docNames.length} documents.
+                  Ask to compare, summarize, or teach concepts across{" "}
+                  {docNames.length} documents in any language.
                 </p>
                 <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 max-w-sm">
                   {docNames.map((name, idx) => (
@@ -150,14 +151,36 @@ function Messages({
                     </span>
                   ))}
                 </div>
+                <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-[11px] font-medium text-blue-700">
+                  <Globe className="h-3 w-3 shrink-0" />
+                  <span>Ask your AI tutor in any language</span>
+                </span>
               </>
             ) : (
               <>
                 <MessageSquare className="h-8 w-8 text-blue-500" />
                 <h3 className="font-semibold text-xl">You&apos;re all set!</h3>
-                <p className="text-zinc-500 text-sm">
-                  Ask your first question to get started.
+                <p className="text-zinc-500 text-sm max-w-xs">
+                  Upload in any language and ask our AI tutor to explain or
+                  teach you in any language.
                 </p>
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 max-w-sm">
+                  {[
+                    "Teach me this document step-by-step",
+                    "Explain this in French",
+                    "Teach me this in Yoruba",
+                  ].map((promptText) => (
+                    <button
+                      key={promptText}
+                      type="button"
+                      onClick={() => setInputValue(promptText)}
+                      className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition"
+                    >
+                      <Globe className="h-3 w-3 text-blue-600 shrink-0" />
+                      <span>{promptText}</span>
+                    </button>
+                  ))}
+                </div>
               </>
             )}
           </div>

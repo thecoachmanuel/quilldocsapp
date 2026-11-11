@@ -25,6 +25,7 @@ import { getUserSubscriptionPlan, DynamicPlan } from "@/lib/subscription";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import LimitUpgradePrompt from "./LimitUpgradePrompt";
 
 interface PageProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
@@ -171,6 +172,20 @@ const Dashboard = ({ subscriptionPlan, upgradePlan = null }: PageProps) => {
         </div>
       </div>
 
+      {!subscriptionPlan.isSubscribed &&
+        files &&
+        files.length >= activePlan.quota && (
+          <LimitUpgradePrompt
+            variant="banner"
+            limitType="quota"
+            reasonTitle={`Document quota reached (${files.length}/${activePlan.quota} files)`}
+            reasonDescription={`You've used all ${activePlan.quota} document slots included in your ${activePlan.name} plan.`}
+            currentPlanName={activePlan.name}
+            isSubscribed={subscriptionPlan.isSubscribed}
+            upgradePlan={activeUpgradePlan}
+          />
+        )}
+
       {/* display all user files */}
       {files && files?.length !== 0 ? (
         <ul className="mt-8 grid grid-cols-1 gap-6 divide-y divide-zinc-200 md:grid-cols-2 lg:grid-cols-3">
@@ -259,6 +274,18 @@ const Dashboard = ({ subscriptionPlan, upgradePlan = null }: PageProps) => {
                       </div>
                     </div>
                   </Link>
+
+                  {file.uploadStatus === "FAILED" && (
+                    <div className="px-6 pt-3 pb-1 border-t-0">
+                      <Link
+                        href="/pricing"
+                        className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700 border border-red-200 hover:bg-red-100 transition"
+                      >
+                        <span>Exceeds plan limit &bull; Upgrade Plan</span>
+                        <ArrowRight className="h-3 w-3" />
+                      </Link>
+                    </div>
+                  )}
 
                   <div className="px-6 mt-4 grid grid-cols-3 place-items-center py-2 gap-6 text-xs text-zinc-500">
                     <div className="flex items-center gap-2">

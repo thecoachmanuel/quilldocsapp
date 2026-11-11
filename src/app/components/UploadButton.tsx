@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/components/ui/use-toast";
 import { useUploadThing } from "@/lib/uploadthing";
 import { DialogTrigger } from "@radix-ui/react-dialog";
@@ -12,14 +13,13 @@ import {
   Loader2,
   FileText,
   Presentation,
-  Gem,
-  ArrowRight,
 } from "lucide-react";
 import { useState } from "react";
 import DropZone from "react-dropzone";
 import { trpc } from "../_trpc/client";
 import { useRouter } from "next/navigation";
 import { DynamicPlan } from "@/lib/subscription";
+import LimitUpgradePrompt, { LimitType } from "./LimitUpgradePrompt";
 
 const UploadDropZone = ({
   isSubscribed,
@@ -40,13 +40,28 @@ const UploadDropZone = ({
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadThingError, setUploadThingError] = useState<string | null>(null);
+  const [limitError, setLimitError] = useState<{
+    type: LimitType;
+    title: string;
+    description: string;
+  } | null>(null);
   const { toast } = useToast();
   const { startUpload } = useUploadThing(
     isSubscribed ? "proPlanUploader" : "freePlanUploader",
     {
       onUploadError: (err) => {
         console.error("[UploadThing] Error:", err);
-        setUploadThingError(err.message || "UploadThing upload failed");
+        const msg = err.message || "UploadThing upload failed";
+        setUploadThingError(msg);
+        if (/quota|size|limit|exceed|maximum/i.test(msg)) {
+          setLimitError({
+            type: /quota|maximum/i.test(msg) ? "quota" : "fileSize",
+            title: /quota/i.test(msg)
+              ? "Document Quota Reached"
+              : "Plan Limit Exceeded",
+            description: msg,
+          });
+        }
       },
     }
   );
@@ -83,6 +98,27 @@ const UploadDropZone = ({
     return interval;
   };
 
+  if (limitError) {
+    return (
+      <div className="p-2 sm:p-4">
+        <LimitUpgradePrompt
+          variant="card"
+          limitType={limitError.type}
+          reasonTitle={limitError.title}
+          reasonDescription={limitError.description}
+          currentPlanName={planName}
+          isSubscribed={isSubscribed}
+          upgradePlan={upgradePlan}
+          onNavigate={() => closeDialog?.()}
+          secondaryAction={{
+            label: "Try Another File",
+            onClick: () => setLimitError(null),
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <DropZone
       noClick={true}
@@ -104,17 +140,32 @@ const UploadDropZone = ({
         // Client-side file size check using live plan maxFileSizeMB
         const maxBytes = maxFileSizeMB * 1024 * 1024;
         if (acceptedFile[0].size > maxBytes) {
+          const fileMB = (acceptedFile[0].size / (1024 * 1024)).toFixed(1);
+          const desc = `This file is ${fileMB}MB. Your ${planName} plan limit is ${maxFileSizeMB}MB.${
+            !isSubscribed && upgradePlan
+              ? ` Upgrade to ${upgradePlan.name} for up to ${upgradePlan.maxFileSizeMB}MB files.`
+              : ""
+          }`;
+          setLimitError({
+            type: "fileSize",
+            title: "File Size Limit Exceeded",
+            description: `${acceptedFile[0].name} is ${fileMB}MB, above your ${planName} plan's ${maxFileSizeMB}MB file limit.`,
+          });
           return toast({
             title: "File Size Limit Exceeded",
-            description: `This file is ${(
-              acceptedFile[0].size /
-              (1024 * 1024)
-            ).toFixed(1)}MB. Your ${planName} plan limit is ${maxFileSizeMB}MB.${
-              !isSubscribed && upgradePlan
-                ? ` Upgrade to ${upgradePlan.name} for up to ${upgradePlan.maxFileSizeMB}MB files.`
-                : ""
-            }`,
+            description: desc,
             variant: "destructive",
+            action: !isSubscribed ? (
+              <ToastAction
+                altText="See Pricing"
+                onClick={() => {
+                  if (closeDialog) closeDialog();
+                  router.push("/pricing");
+                }}
+              >
+                See Pricing
+              </ToastAction>
+            ) : undefined,
           });
         }
 
@@ -149,21 +200,64 @@ const UploadDropZone = ({
           } else {
             const errData = await res.json().catch(() => ({}));
             // Only halt if it's an intentional user quota / plan limit / validation rejection:
+            const isLimitRejection = Boolean(
+              errData.quotaExceeded ||
+                errData.pagesExceeded ||
+                errData.fileSizeExceeded ||
+                res.status === 403 ||
+                /quota|limit|exceed|upgrade/i.test(errData.error || "")
+            );
+
             if (
               res.status === 400 ||
               res.status === 403 ||
-              errData.quotaExceeded ||
-              errData.pagesExceeded ||
-              errData.fileSizeExceeded
+              isLimitRejection
             ) {
               clearInterval(progressInterval);
               setIsUploading(false);
+              const errMsg =
+                errData.error ||
+                "Failed to upload document within current plan limits.";
+
+              if (isLimitRejection) {
+                const type: LimitType = errData.quotaExceeded
+                  ? "quota"
+                  : errData.pagesExceeded
+                    ? "pages"
+                    : errData.fileSizeExceeded
+                      ? "fileSize"
+                      : "generic";
+                const title =
+                  type === "quota"
+                    ? "Document Quota Reached"
+                    : type === "pages"
+                      ? "Page Limit Exceeded"
+                      : type === "fileSize"
+                        ? "File Size Limit Exceeded"
+                        : "Plan Limit Reached";
+                setLimitError({
+                  type,
+                  title,
+                  description: errMsg,
+                });
+              }
+
               return toast({
-                title: "Upload Rejected",
-                description:
-                  errData.error ||
-                  "Failed to upload document within current plan limits.",
+                title: isLimitRejection ? "Plan Limit Reached" : "Upload Rejected",
+                description: errMsg,
                 variant: "destructive",
+                action:
+                  isLimitRejection && !isSubscribed ? (
+                    <ToastAction
+                      altText="See Pricing"
+                      onClick={() => {
+                        if (closeDialog) closeDialog();
+                        router.push("/pricing");
+                      }}
+                    >
+                      See Pricing
+                    </ToastAction>
+                  ) : undefined,
               });
             }
             console.warn(
@@ -185,12 +279,24 @@ const UploadDropZone = ({
           if (!res) {
             clearInterval(progressInterval);
             setIsUploading(false);
+            const fallbackMsg =
+              uploadThingError ||
+              "Upload failed. Please check your document size and plan limits, then try again.";
             return toast({
               title: "Upload Failed",
-              description:
-                uploadThingError ||
-                "Upload failed. Please check your document size and plan limits, then try again.",
+              description: fallbackMsg,
               variant: "destructive",
+              action: !isSubscribed ? (
+                <ToastAction
+                  altText="See Pricing"
+                  onClick={() => {
+                    if (closeDialog) closeDialog();
+                    router.push("/pricing");
+                  }}
+                >
+                  See Pricing
+                </ToastAction>
+              ) : undefined,
             });
           }
 
@@ -311,7 +417,6 @@ function UploadButton({
   upgradePlan?: DynamicPlan | null;
 }) {
   const [isOpen, setIsOpen] = useState<boolean>(false);
-  const router = useRouter();
   const isQuotaReached = currentFilesCount >= maxQuota;
 
   return (
@@ -326,46 +431,23 @@ function UploadButton({
       <DialogTrigger asChild onClick={() => setIsOpen(true)}>
         <Button>Upload file</Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         {isQuotaReached ? (
-          <div className="p-4 flex flex-col items-center text-center">
-            <div className="rounded-full bg-blue-100 p-3 mb-3">
-              <Gem className="h-6 w-6 text-blue-600" />
-            </div>
-            <h3 className="font-semibold text-lg text-zinc-900 mb-1">
-              Document Quota Reached
-            </h3>
-            <p className="text-sm text-zinc-600 mb-5 max-w-sm">
-              You have uploaded {currentFilesCount} of {maxQuota} documents
-              included in your <strong>{planName}</strong> plan.
-              {!isSubscribed && upgradePlan
-                ? ` Upgrade to ${upgradePlan.name} to unlock ${upgradePlan.quota} documents, ${upgradePlan.pagesPerPdf} pages per file, and ${upgradePlan.maxFileSizeMB}MB uploads.`
-                : !isSubscribed
-                  ? " Please upgrade your plan to unlock higher limits."
-                  : ""}
-            </p>
-            <div className="flex gap-3 w-full sm:w-auto">
-              {!isSubscribed ? (
-                <Button
-                  onClick={() => {
-                    setIsOpen(false);
-                    router.push("/pricing");
-                  }}
-                  className="w-full sm:w-auto"
-                >
-                  View {upgradePlan?.name || "Pro"} Plan{" "}
-                  <ArrowRight className="ml-1.5 h-4 w-4" />
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  onClick={() => setIsOpen(false)}
-                  className="w-full sm:w-auto"
-                >
-                  Close
-                </Button>
-              )}
-            </div>
+          <div className="p-2 sm:p-4">
+            <LimitUpgradePrompt
+              variant="card"
+              limitType="quota"
+              reasonTitle="Document Quota Reached"
+              reasonDescription={`You have uploaded ${currentFilesCount} of ${maxQuota} documents included in your ${planName} plan.`}
+              currentPlanName={planName}
+              isSubscribed={isSubscribed}
+              upgradePlan={upgradePlan}
+              onNavigate={() => setIsOpen(false)}
+              secondaryAction={{
+                label: "Manage Files",
+                onClick: () => setIsOpen(false),
+              }}
+            />
           </div>
         ) : (
           <UploadDropZone

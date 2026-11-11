@@ -20,7 +20,6 @@ import {
   Calendar,
   FileText,
   MessageSquare,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -854,7 +853,7 @@ export default function UsersManagement() {
                     {manageSubMutation.isLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Sparkles className="h-4 w-4" />
+                      <Gem className="h-4 w-4" />
                     )}
                     Activate Plan ({subDurationDays}d)
                   </Button>

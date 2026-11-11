@@ -782,9 +782,9 @@ export default function DocxRenderer({
   };
 
   return (
-    <div className="w-full max-w-full bg-white rounded-md shadow flex flex-col items-center overflow-x-hidden">
+    <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
       {/* Top Toolbar matching Quill app design with Page Navigation */}
-      <div className="min-h-[3.25rem] h-auto py-1 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+      <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 shrink-0">
           <Button
             disabled={currPage <= 1 || renderMode === "clean"}
@@ -1133,11 +1133,11 @@ export default function DocxRenderer({
         >
           <div
             ref={resizeDetectorRef}
-            className="relative w-full max-w-full overflow-x-auto min-h-[360px] flex justify-center"
+            className="relative w-full max-w-full overflow-x-auto min-h-[220px] sm:min-h-[360px] flex justify-center"
           >
             {/* Loading Indicator for Page View */}
             {isLoading && renderMode === "page" && (
-              <div className="py-24 flex flex-col items-center justify-center gap-2">
+              <div className="py-12 sm:py-24 flex flex-col items-center justify-center gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
                 <p className="text-sm text-zinc-500">
                   Rendering Word document pages...

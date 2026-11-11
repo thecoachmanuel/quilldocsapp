@@ -16,7 +16,6 @@ import {
   Plus,
   X,
   Layers,
-  Sparkles,
   Check,
   Search,
   ExternalLink,
@@ -191,9 +190,9 @@ export default function MultiDocumentViewLayout({
   }, [allUserFiles, modalSearchQuery]);
 
   return (
-    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] w-full max-w-full overflow-x-hidden lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
+    <div className="relative flex flex-col justify-start w-full max-w-full overflow-x-clip lg:flex-1 lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
       {/* Top Document Tab Navigation Bar */}
-      <div className="bg-white/95 backdrop-blur border-b border-zinc-200 shrink-0 z-30 px-3 sm:px-6 py-1.5 w-full max-w-full overflow-x-hidden">
+      <div className="bg-white/95 backdrop-blur border-b border-zinc-200 shrink-0 z-30 px-3 sm:px-6 py-1.5 w-full max-w-full overflow-x-clip">
         <div className="flex items-center justify-between gap-2">
           {/* Document Tabs */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
@@ -258,7 +257,7 @@ export default function MultiDocumentViewLayout({
                   : "bg-blue-600 text-white shadow-sm hover:bg-blue-700"
               )}
             >
-              <Sparkles className="h-3 w-3" />
+              <MessageSquare className="h-3 w-3" />
               <span>{isMobileChatOpen ? "Hide Chat" : "Multi-Doc Chat"}</span>
             </button>
           </div>
@@ -266,15 +265,15 @@ export default function MultiDocumentViewLayout({
       </div>
 
       {/* Main Workspace Layout */}
-      <div className="mx-auto w-full max-w-full lg:max-w-8xl flex-1 min-h-0 overflow-x-hidden lg:flex lg:overflow-hidden xl:px-2">
+      <div className="mx-auto w-full max-w-full lg:max-w-8xl lg:flex-1 lg:min-h-0 overflow-x-clip lg:flex lg:overflow-hidden xl:px-2">
         {/* Left Side: Document Renderer */}
         <div
           className={cn(
-            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-hidden lg:h-full lg:overflow-y-auto transition-all duration-200",
+            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-clip lg:h-full lg:overflow-y-auto transition-all duration-200",
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="p-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-hidden">
+          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-clip">
             {activeFile ? (
               <DocumentRenderer
                 key={activeFile.id}
@@ -290,20 +289,16 @@ export default function MultiDocumentViewLayout({
           </div>
         </div>
 
-        {/* Mobile Backdrop */}
+        {/* Mobile Backdrop behind chat modal; tapping outside collapses the modal */}
         {isMobileChatOpen && (
           <div
-            className={cn(
-              "fixed inset-0 bg-black/40 backdrop-blur-[1px] lg:hidden transition-opacity",
-              isKeyboardVisible || isChatExpanded
-                ? "z-[75] opacity-100 pointer-events-auto"
-                : "z-[65] opacity-0 pointer-events-none"
-            )}
+            className="fixed inset-0 z-[65] bg-black/45 lg:hidden transition-opacity pointer-events-auto"
             onClick={() => {
               if (document.activeElement instanceof HTMLElement) {
                 document.activeElement.blur();
               }
-              if (isChatExpanded) setIsChatExpanded(false);
+              setIsChatExpanded(false);
+              setIsMobileChatOpen(false);
             }}
           />
         )}
@@ -326,7 +321,7 @@ export default function MultiDocumentViewLayout({
                   "max-lg:transition-[height,transform,opacity,border-radius] max-lg:duration-300 max-lg:ease-in-out",
                   isMobileChatOpen
                     ? isChatExpanded
-                      ? "max-lg:h-[100dvh] max-lg:rounded-none max-lg:translate-y-0 max-lg:opacity-100"
+                      ? "max-lg:h-[88dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
                       : "max-lg:h-[58dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
                     : "max-lg:h-0 max-lg:translate-y-full max-lg:opacity-0 max-lg:pointer-events-none"
                 )
@@ -357,7 +352,7 @@ export default function MultiDocumentViewLayout({
                 Multi-Doc Synthesis
               </span>
               <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 border border-blue-200 shrink-0">
-                <Sparkles className="h-2.5 w-2.5" />
+                <Layers className="h-2.5 w-2.5" />
                 {selectedFiles.length} Docs
               </span>
             </div>
@@ -440,7 +435,7 @@ export default function MultiDocumentViewLayout({
           className="lg:hidden fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-xl shadow-blue-600/30 hover:bg-blue-700 active:scale-95 transition-all border border-blue-500"
           aria-label="Open Multi-Doc Chat"
         >
-          <Sparkles className="h-4 w-4" />
+          <MessageSquare className="h-4 w-4" />
           <span>Chat with {selectedFiles.length} Docs</span>
         </button>
       )}

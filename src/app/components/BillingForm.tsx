@@ -3,7 +3,7 @@
 import { getUserSubscriptionPlan } from "@/lib/stripe";
 import { trpc } from "@/app/_trpc/client";
 import MaxWidthWrapper from "./MaxWidthWrapper";
-import { Check, Gem, Loader2, Sparkles, ShieldCheck } from "lucide-react";
+import { Check, Gem, Loader2, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -172,7 +172,7 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
 
               {!isPro && (
                 <div className="hidden sm:flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full font-medium">
-                  <Sparkles className="h-3.5 w-3.5" />
+                  <Gem className="h-3.5 w-3.5" />
                   Upgrade available
                 </div>
               )}

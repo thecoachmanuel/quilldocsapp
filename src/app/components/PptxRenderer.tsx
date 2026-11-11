@@ -600,9 +600,9 @@ export default function PptxRenderer({
   );
 
   return (
-    <div className="w-full max-w-full bg-white rounded-md shadow flex flex-col items-center overflow-x-hidden">
+    <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
       {/* Top Toolbar matching Quill app design */}
-      <div className="min-h-[3.25rem] h-auto py-1 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+      <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 shrink-0">
           <Button
             disabled={currSlide <= 1}
@@ -903,18 +903,18 @@ export default function PptxRenderer({
         <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)] w-full max-w-full">
           <div ref={containerRef} className="w-full max-w-full overflow-x-auto flex justify-center">
             {isLoading ? (
-              <div className="flex justify-center items-center py-24 flex-col gap-2">
+              <div className="flex justify-center items-center py-12 sm:py-24 flex-col gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
                 <p className="text-sm text-zinc-500">
                   Rendering presentation slides...
                 </p>
               </div>
             ) : error ? (
-              <div className="flex justify-center items-center py-24 text-center">
+              <div className="flex justify-center items-center py-12 sm:py-24 text-center">
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             ) : (
-              <div className="w-full min-h-[240px]">
+              <div className="w-full min-h-[180px] sm:min-h-[240px]">
                 {viewMode === "visual"
                   ? renderVisualSlide(containerWidth)
                   : renderOutlineView()}

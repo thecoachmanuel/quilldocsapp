@@ -15,7 +15,6 @@ import {
   Trash,
   Check,
   Layers,
-  Sparkles,
   X,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
@@ -132,7 +131,7 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
               )}
               title="Chat with all your uploaded documents at once"
             >
-              <Sparkles className="h-4 w-4 text-blue-600" />
+              <Layers className="h-4 w-4 text-blue-600" />
               <span>Chat with All Files</span>
             </Link>
           )}
@@ -316,7 +315,7 @@ const Dashboard = ({ subscriptionPlan }: PageProps) => {
                 onClick={startMultiChat}
                 className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-md"
               >
-                <Sparkles className="h-3.5 w-3.5" />
+                <MessageSquare className="h-3.5 w-3.5" />
                 <span>Chat with Selected</span>
               </Button>
             </div>

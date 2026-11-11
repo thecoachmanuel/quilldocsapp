@@ -257,8 +257,8 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
   };
 
   return (
-    <div className="w-full max-w-full bg-white rounded-md shadow flex flex-col items-center overflow-x-hidden">
-      <div className="min-h-[3.25rem] h-auto py-1 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+    <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
+      <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <Button
             disabled={currPage <= 1}
@@ -470,9 +470,9 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
         <SimpleBar autoHide={false} className="max-h-[calc(100dvh-7.5rem)] w-full max-w-full">
           <div ref={ref} className="w-full max-w-full overflow-x-auto flex justify-center">
             {renderMode === "reader" ? (
-              <div className="w-full max-w-4xl mx-auto my-2 sm:my-5 bg-white border border-zinc-200 shadow-sm rounded-lg p-4 sm:p-10 md:p-14 select-text">
+              <div className="w-full max-w-4xl mx-auto my-1 sm:my-4 bg-white border border-zinc-200 shadow-sm rounded-lg p-3.5 sm:p-10 md:p-14 select-text">
                 {isReaderLoading ? (
-                  <div className="py-16 flex flex-col items-center justify-center gap-2">
+                  <div className="py-12 sm:py-16 flex flex-col items-center justify-center gap-2">
                     <Loader2 className="h-7 w-7 animate-spin text-blue-600" />
                     <p className="text-sm text-zinc-500">
                       Preparing Reader View...
@@ -499,7 +499,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
               <Document
                 loading={
                   <div className="flex justify-center">
-                    <Loader2 className="my-24 h-6 w-6 animate-spin text-blue-600" />
+                    <Loader2 className="my-12 sm:my-24 h-6 w-6 animate-spin text-blue-600" />
                   </div>
                 }
                 onLoadError={() => {
@@ -540,7 +540,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                   }
                   loading={
                     <div className="flex justify-center">
-                      <Loader2 className="my-24 h-6 w-6 animate-spin text-blue-600" />
+                      <Loader2 className="my-12 sm:my-24 h-6 w-6 animate-spin text-blue-600" />
                     </div>
                   }
                   onRenderSuccess={() => setRenderedScale(scale)}

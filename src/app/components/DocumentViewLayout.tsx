@@ -51,9 +51,9 @@ export default function DocumentViewLayout({
       : undefined;
 
   return (
-    <div className="relative flex-1 flex flex-col justify-start min-h-[calc(100dvh-3.5rem)] w-full max-w-full overflow-x-hidden lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
-      {/* Mobile Quick Bar - Compact sticky header for fast document/chat control */}
-      <div className="lg:hidden flex items-center justify-between px-2.5 py-1.5 bg-white/95 backdrop-blur border-b border-zinc-200 sticky top-14 z-30 w-full max-w-full">
+    <div className="relative flex flex-col justify-start w-full max-w-full overflow-x-clip lg:flex-1 lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
+      {/* Mobile Quick Bar - Compact header flush below navbar without sticky container offset */}
+      <div className="lg:hidden flex items-center justify-between px-2.5 py-1 bg-white border-b border-zinc-200 w-full max-w-full shrink-0">
         <div className="flex items-center gap-1.5 min-w-0 pr-2">
           <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
           <span className="text-xs font-medium text-zinc-800 truncate">
@@ -68,7 +68,7 @@ export default function DocumentViewLayout({
               setIsMobileChatOpen((prev) => !prev);
             }}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all",
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all",
               isMobileChatOpen
                 ? "bg-zinc-900 text-white"
                 : "bg-blue-600 text-white shadow-sm hover:bg-blue-700"
@@ -80,33 +80,29 @@ export default function DocumentViewLayout({
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-full lg:max-w-8xl flex-1 min-h-0 overflow-x-hidden lg:flex lg:overflow-hidden xl:px-2">
+      <div className="mx-auto w-full max-w-full lg:max-w-8xl lg:flex-1 lg:min-h-0 overflow-x-clip lg:flex lg:overflow-hidden xl:px-2">
         {/* Left Side: Document / Slide Viewer */}
         <div
           className={cn(
-            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-hidden lg:h-full lg:overflow-y-auto transition-all duration-200",
+            "flex-1 xl:flex min-w-0 w-full max-w-full overflow-x-clip lg:h-full lg:overflow-y-auto transition-all duration-200",
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="p-1 sm:px-3 sm:py-2 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-hidden">
+          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-clip">
             <DocumentRenderer fileId={fileId} url={url} fileName={fileName} />
           </div>
         </div>
 
-        {/* Mobile Backdrop when Chat is expanded to full height or when virtual keypad is active */}
+        {/* Mobile Backdrop behind chat modal; tapping outside collapses the modal */}
         {isMobileChatOpen && (
           <div
-            className={cn(
-              "fixed inset-0 bg-black/40 backdrop-blur-[1px] lg:hidden transition-opacity",
-              isKeyboardVisible || isChatExpanded
-                ? "z-[75] opacity-100 pointer-events-auto"
-                : "z-[65] opacity-0 pointer-events-none"
-            )}
+            className="fixed inset-0 z-[65] bg-black/45 lg:hidden transition-opacity pointer-events-auto"
             onClick={() => {
               if (document.activeElement instanceof HTMLElement) {
                 document.activeElement.blur();
               }
-              if (isChatExpanded) setIsChatExpanded(false);
+              setIsChatExpanded(false);
+              setIsMobileChatOpen(false);
             }}
           />
         )}
@@ -122,7 +118,7 @@ export default function DocumentViewLayout({
               : isChatExpanded
               ? "lg:flex lg:w-full lg:flex-1 lg:h-full lg:border-x lg:border-gray-200 lg:transition-all lg:duration-300"
               : "lg:flex lg:w-96 lg:shrink-0 lg:flex-[0.75] lg:h-full lg:border-l lg:border-gray-200 lg:transition-all lg:duration-300",
-            // Mobile floating modal styles
+            // Mobile floating modal styles (always stacked above z-[65] backdrop so modal is crisp and interactive)
             "max-lg:fixed max-lg:inset-x-0 max-lg:shadow-[0_-10px_35px_rgba(0,0,0,0.2)] max-lg:overflow-hidden",
             isKeyboardVisible
               ? "max-lg:z-[80] max-lg:rounded-none max-lg:border-t-0 max-lg:transition-none"
@@ -131,7 +127,7 @@ export default function DocumentViewLayout({
                   "max-lg:transition-[height,transform,opacity,border-radius] max-lg:duration-300 max-lg:ease-in-out",
                   isMobileChatOpen
                     ? isChatExpanded
-                      ? "max-lg:h-[100dvh] max-lg:rounded-none max-lg:translate-y-0 max-lg:opacity-100"
+                      ? "max-lg:h-[88dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
                       : "max-lg:h-[58dvh] max-lg:rounded-t-2xl max-lg:translate-y-0 max-lg:opacity-100"
                     : "max-lg:h-0 max-lg:translate-y-full max-lg:opacity-0 max-lg:pointer-events-none"
                 )

@@ -9,7 +9,6 @@ import {
   Edit3,
   Trash2,
   Check,
-  Sparkles,
   RotateCcw,
   ExternalLink,
   Loader2,
@@ -317,7 +316,7 @@ export default function PlansManagement() {
             >
               {plan.isPopular && (
                 <div className="absolute -top-3.5 left-6 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-blue-600 to-cyan-600 px-3 py-0.5 text-xs font-semibold text-white shadow-sm">
-                  <Sparkles className="h-3 w-3" />
+                  <Check className="h-3 w-3" />
                   Highlighted / Popular
                 </div>
               )}

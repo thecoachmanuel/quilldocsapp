@@ -25,12 +25,16 @@ interface ParsedMessageCitations {
   citedIndices: number[];
 }
 
+function encodeJumpSegment(value: string): string {
+  return encodeURIComponent(value).replace(/\(/g, "%28").replace(/\)/g, "%29");
+}
+
 function parseSourcesFooter(rawText: string): {
   bodyText: string;
   footerSources: DocSourceRef[];
 } {
   const footerMatch = rawText.match(
-    /\n+(?:\*\*)?Sources:(?:\*\*)?\s*((?:\[\d+\][\s\S]+?))$/i
+    /\n+(?:\*\*)?Sources:(?:\*\*)?\s*(?:[-•*]\s*)?((?:\[\d+\][\s\S]+?))$/i
   );
   if (!footerMatch) {
     return { bodyText: rawText, footerSources: [] };
@@ -38,7 +42,7 @@ function parseSourcesFooter(rawText: string): {
 
   const footerStr = footerMatch[1].trim();
   const entries: Array<{ idx: number; name: string }> = [];
-  const itemRegex = /\[(\d+)\]\s*([^|\n]+?)(?=\s*(?:[|·]\s*)?\[\d+\]|$)/g;
+  const itemRegex = /\[(\d+)\]\s*([^|\n]+?)(?=\s*(?:[|·]\s*|[-•*]\s*)?\[\d+\]|$)/g;
   let m: RegExpExecArray | null;
   while ((m = itemRegex.exec(footerStr)) !== null) {
     const idx = parseInt(m[1], 10);
@@ -77,139 +81,225 @@ function formatMessageCitations(
     propSources.length >= footerSources.length
       ? propSources
       : footerSources.map((fs, i) => ({
-        id: propSources[i]?.id || fs.id || "",
-        name: propSources[i]?.name || fs.name,
-      }));
+          id: propSources[i]?.id || fs.id || "",
+          name: propSources[i]?.name || fs.name,
+        }));
 
   const citedSet = new Set<number>();
 
-  // Match priority in a single left-to-right pass to prevent nested replacement:
-  // 1) Compact indexed citations: [1 · p.4], [1, Page 4], [Doc 2 · s.5], (1 · p.3-4)
-  // 2) Full filename citations: [Report.pdf • Page 4], [Source: Deck.pptx, Slide 2]
-  // 3) Single-doc citations: [Page 4], [Slides 2-4], (Slide 3), [s.5], Slide 4
-  // 4) Bare multi-doc index citations (only when multi-doc sources exist): [1], [Doc 2]
+  // Preserve fenced code blocks & non-citation inline code; unwrap citation-only backticks like `[Slide 5]`
+  const codePlaceholders: string[] = [];
+  const citationOnlyCodeRegex =
+    /^`((?:[\[(]?(?:Doc(?:ument)?\s*\d+|Source:[^\n`]+|Page|Slide|Diapositiva|Diapositive|Folie|s\.|p\.)[^\n`]*[\])]?))`$/i;
+  const protectedBody = bodyText
+    .replace(/```[\s\S]*?```/g, (block) => {
+      const token = `\u0000CODEBLK_${codePlaceholders.length}\u0000`;
+      codePlaceholders.push(block);
+      return token;
+    })
+    .replace(/`([^`\n]+)`/g, (full, inner) => {
+      if (citationOnlyCodeRegex.test(full)) {
+        return inner.trim();
+      }
+      const token = `\u0000CODEBLK_${codePlaceholders.length}\u0000`;
+      codePlaceholders.push(full);
+      return token;
+    });
+
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const knownDocNames = effectiveSources
+    .flatMap((s) => {
+      const n = (s.name || "").trim();
+      if (!n) return [];
+      const base = n.replace(/\.(pdf|docx?|pptx?)$/i, "").trim();
+      return base && base.length >= 2 && base !== n ? [n, base] : [n];
+    })
+    .filter((n) => n.length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex);
+
+  const docNameMatcher =
+    knownDocNames.length > 0
+      ? `(?:[^\\]\\)\\n]+?\\.(?:pdf|docx?|pptx?)|${knownDocNames.join("|")})`
+      : "[^\\]\\)\\n]+?\\.(?:pdf|docx?|pptx?)";
+
+  const slideWordRe = "(?:slides?|diapositivas?|diapositives?|folien?)";
+  const unitWordRe = `(?:pages?|${slideWordRe})`;
+  const isSlideUnit = (u: string) =>
+    /^(?:s\.?|slides?|diapositivas?|diapositives?|folien?)$/i.test(u.trim());
+
+  // Priority-ordered patterns using single left-to-right pass so Markdown links never nest
+  const branch1Indexed = new RegExp(
+    `^[\\[(](?:Doc(?:ument)?\\s*|D)?([0-9]{1,2})\\s*(?:•|·|\\||-|–|,|:)?\\s*((?:p\\.?|pages?|pp\\.?)|(?:s\\.?|${slideWordRe}))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\s*[:—–-]\\s*([^\\]\\)\\n]{1,60}))?[\\])]$`,
+    "i"
+  );
+  const branch2Doc = new RegExp(
+    `^[\\[(](?:Source:\\s*)?(${docNameMatcher})\\s*(?:•|·|\\||-|–|,|:)\\s*((?:p\\.?|pages?|pp\\.?)|(?:s\\.?|${slideWordRe}))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\s*[:—–-]\\s*[^\\]\\)\\n]{1,60})?[\\])]$`,
+    "i"
+  );
+  const branch3BracketUnit = new RegExp(
+    `^[\\[(](${unitWordRe})\\s*#?([0-9]+(?:\\s*(?:[-–&,]|and)\\s*#?[0-9]+)*)(?:\\s*[:—–-]\\s*([^\\]\\)\\n]{1,60}))?[\\])]$`,
+    "i"
+  );
+  const branch4ShortUnit =
+    /^[\[(](s\.?|p\.?)\s*#?([0-9]+)(?:\s*[-–]\s*([0-9]+))?[\])]$/i;
+  const branch5BareUnit = new RegExp(
+    `^(${unitWordRe})\\s*#?([0-9]+(?:\\s*(?:[-–&,]|and)\\s*#?[0-9]+)*)$`,
+    "i"
+  );
+  const branch6BareIdx =
+    /^(^|[^\w\]])\[(?:Doc(?:ument)?\s*)?([1-9][0-9]?)\]$/i;
+
   const combinedRegex = new RegExp(
     [
-      "(?:\\[|\\()(?:Doc(?:ument)?\\s*|D)?([0-9]{1,2})\\s*(?:•|·|\\||-|–|,|:)?\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
-      "(?:\\[|\\()(?:Source:\\s*)?([^\\]\\)]+?\\.(?:pdf|docx?|pptx?))\\s*(?:•|·|\\||-|–|,|:)\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*[0-9]+)?(?:\\]|\\))(?!\\()",
-      "(?:\\[|\\()(Page|Slide)s?\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
-      "(?:\\[|\\()(?:(s\\.?)|(p\\.?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
-      "\\b(Page|Slide)s?\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?![\\]\\w])(?!\\s*\\()",
-      "(^|[^\\w\\]])\\[(?:Doc(?:ument)?\\s*)?([1-9][0-9]?)\\](?!\\()",
+      `(?:\\[|\\()(?:Doc(?:ument)?\\s*|D)?[0-9]{1,2}\\s*(?:•|·|\\||-|–|,|:)?\\s*(?:p\\.?|pages?|pp\\.?|s\\.?|${slideWordRe})\\s*#?[0-9]+(?:\\s*[-–]\\s*[0-9]+)?(?:\\s*[:—–-]\\s*[^\\]\\)\\n]{1,60})?(?:\\]|\\))(?!\\()`,
+      `(?:\\[|\\()(?:Source:\\s*)?${docNameMatcher}\\s*(?:•|·|\\||-|–|,|:)\\s*(?:p\\.?|pages?|pp\\.?|s\\.?|${slideWordRe})\\s*#?[0-9]+(?:\\s*[-–]\\s*[0-9]+)?(?:\\s*[:—–-]\\s*[^\\]\\)\\n]{1,60})?(?:\\]|\\))(?!\\()`,
+      `(?:\\[|\\()${unitWordRe}\\s*#?[0-9]+(?:\\s*(?:[-–&,]|and)\\s*#?[0-9]+)*(?:\\s*[:—–-]\\s*[^\\]\\)\\n]{1,60})?(?:\\]|\\))(?!\\()`,
+      "(?:\\[|\\()(?:s\\.?|p\\.?)\\s*#?[0-9]+(?:\\s*[-–]\\s*[0-9]+)?(?:\\]|\\))(?!\\()",
+      `\\b${unitWordRe}\\s*#?[0-9]+(?:\\s*(?:[-–&,]|\\band\\b)\\s*#?[0-9]+)*(?![\\]\\w])(?!\\s*\\()`,
+      "(?:^|[^\\w\\]])\\[(?:Doc(?:ument)?\\s*)?[1-9][0-9]?\\](?!\\()",
     ].join("|"),
     "gi"
   );
 
-  const formattedText = bodyText.replace(
-    combinedRegex,
-    (
-      match,
-      idxNum,
-      idxPageUnit,
-      idxSlideUnit,
-      idxStartPage,
-      idxEndPage,
-      docName,
-      docPageUnit,
-      docSlideUnit,
-      docPageNum,
-      bracketUnit,
-      bracketNum,
-      bracketEndNum,
-      shortSlideUnit,
-      shortPageUnit,
-      shortNum,
-      shortEndNum,
-      bareUnit,
-      barePageNum,
-      barePageEndNum,
-      barePrefix,
-      bareIdx
-    ) => {
-      // Branch 1: Indexed citation [1 · p.4]
-      if (idxNum && idxStartPage) {
-        const docIdx = parseInt(idxNum, 10);
-        if (docIdx >= 1 && docIdx <= effectiveSources.length) {
-          citedSet.add(docIdx);
-          const isSlide = Boolean(idxSlideUnit);
-          const unit = isSlide ? "slide" : "page";
-          const unitShort = isSlide ? "s" : "p";
-          const rangeLabel = idxEndPage
-            ? `${idxStartPage}-${idxEndPage}`
-            : idxStartPage;
-          return `[${docIdx} · ${unitShort}.${rangeLabel}](#jump-idx-${docIdx}-${unit}-${idxStartPage})`;
-        }
-        return match;
+  const linkifyMultiNumbers = (
+    rawUnit: string,
+    numsSpec: string,
+    trailingTitle?: string
+  ): string => {
+    const slide = isSlideUnit(rawUnit);
+    const unitLower = slide ? "slide" : "page";
+    const unitTitle = slide ? "Slide" : "Page";
+
+    // Single range (e.g. "3-5" or "3–5") -> single button pointing to start slide/page
+    const rangeOnly = numsSpec.match(/^#?([0-9]+)\s*[-–]\s*#?([0-9]+)$/);
+    if (rangeOnly) {
+      const label = trailingTitle
+        ? `${unitTitle}s ${rangeOnly[1]}–${rangeOnly[2]}: ${trailingTitle.trim()}`
+        : `${unitTitle}s ${rangeOnly[1]}–${rangeOnly[2]}`;
+      return `[${label}](#jump-${unitLower}-${rangeOnly[1]})`;
+    }
+
+    // List of numbers (e.g. "3, 5, and 7" or "3 & 5") -> each number clickable!
+    if (/[,&]|\band\b/i.test(numsSpec)) {
+      const replaced = numsSpec.replace(/#?([0-9]+)/g, (num) => {
+        const cleanNum = num.replace("#", "");
+        return `[${unitTitle} ${cleanNum}](#jump-${unitLower}-${cleanNum})`;
+      });
+      return trailingTitle ? `${replaced}: ${trailingTitle.trim()}` : replaced;
+    }
+
+    const singleNum = numsSpec.replace(/^#/, "").trim();
+    const label = trailingTitle
+      ? `${unitTitle} ${singleNum}: ${trailingTitle.trim()}`
+      : `${unitTitle} ${singleNum}`;
+    return `[${label}](#jump-${unitLower}-${singleNum})`;
+  };
+
+  let formattedText = protectedBody.replace(combinedRegex, (match) => {
+    // 1. Indexed citation [1 · s.5]
+    const m1 = match.match(branch1Indexed);
+    if (m1) {
+      const docIdx = parseInt(m1[1], 10);
+      const unitStr = m1[2];
+      const startPage = m1[3];
+      const endPage = m1[4];
+      if (docIdx >= 1 && docIdx <= effectiveSources.length) {
+        citedSet.add(docIdx);
+        const slide = isSlideUnit(unitStr);
+        const unit = slide ? "slide" : "page";
+        const unitShort = slide ? "s" : "p";
+        const rangeLabel = endPage ? `${startPage}-${endPage}` : startPage;
+        return `[${docIdx} · ${unitShort}.${rangeLabel}](#jump-idx-${docIdx}-${unit}-${startPage})`;
       }
-
-      // Branch 2: Legacy/explicit filename citation [Report.pdf • Page 4]
-      if (docName && docPageNum) {
-        const cleanDoc = docName.trim();
-        const isSlide = Boolean(docSlideUnit);
-        const unit = isSlide ? "slide" : "page";
-        const unitShort = isSlide ? "s" : "p";
-
-        const matchedIndex = effectiveSources.findIndex(
-          (s) =>
-            s.name.toLowerCase() === cleanDoc.toLowerCase() ||
-            s.name.toLowerCase().includes(cleanDoc.toLowerCase()) ||
-            cleanDoc.toLowerCase().includes(s.name.toLowerCase())
-        );
-
-        if (matchedIndex !== -1 && effectiveSources.length > 1) {
-          const docIdx = matchedIndex + 1;
-          citedSet.add(docIdx);
-          return `[${docIdx} · ${unitShort}.${docPageNum}](#jump-idx-${docIdx}-${unit}-${docPageNum})`;
-        }
-
-        const displayUnit = isSlide ? "Slide" : "Page";
-        return `[${cleanDoc} • ${displayUnit} ${docPageNum}](#jump-doc-${encodeURIComponent(
-          cleanDoc
-        )}-${unit}-${docPageNum})`;
-      }
-
-      // Branch 3A/3C: Bracketed [Slide 2-4] or bare Slide 2 / Page 4
-      const singleUnit = bracketUnit || bareUnit;
-      const singleNum = bracketNum || barePageNum;
-      const singleEnd = bracketEndNum || barePageEndNum;
-      if (singleUnit && singleNum) {
-        const unitLower = singleUnit.toLowerCase();
-        const unitTitle =
-          unitLower.charAt(0).toUpperCase() + unitLower.slice(1);
-        const label = singleEnd
-          ? `${unitTitle}s ${singleNum}–${singleEnd}`
-          : `${unitTitle} ${singleNum}`;
-        return `[${label}](#jump-${unitLower}-${singleNum})`;
-      }
-
-      // Branch 3B: Bracketed shorthand [s.5] / [p.3-4]
-      if ((shortSlideUnit || shortPageUnit) && shortNum) {
-        const isSlide = Boolean(shortSlideUnit);
-        const unit = isSlide ? "slide" : "page";
-        const displayUnit = isSlide ? "Slide" : "Page";
-        const label = shortEndNum
-          ? `${displayUnit}s ${shortNum}–${shortEndNum}`
-          : `${displayUnit} ${shortNum}`;
-        return `[${label}](#jump-${unit}-${shortNum})`;
-      }
-
-      // Branch 4: Bare multi-doc reference [1] / [Doc 2]
-      if (bareIdx) {
-        const docIdx = parseInt(bareIdx, 10);
-        if (
-          effectiveSources.length > 1 &&
-          docIdx >= 1 &&
-          docIdx <= effectiveSources.length
-        ) {
-          citedSet.add(docIdx);
-          return `${barePrefix || ""}[${docIdx}](#jump-idx-${docIdx}-page-0)`;
-        }
-        return match;
-      }
-
       return match;
     }
-  );
+
+    // 2. Filename citation [Report.pptx • Slide 5]
+    const m2 = match.match(branch2Doc);
+    if (m2) {
+      const cleanDoc = m2[1].trim();
+      const slide = isSlideUnit(m2[2]);
+      const unit = slide ? "slide" : "page";
+      const unitShort = slide ? "s" : "p";
+      const pageNum = m2[3];
+      const endNum = m2[4];
+      const lowerClean = cleanDoc.toLowerCase();
+
+      const matchedIndex = effectiveSources.findIndex((s) => {
+        const sLower = (s.name || "").toLowerCase();
+        const sBase = sLower.replace(/\.(pdf|docx?|pptx?)$/i, "").trim();
+        return (
+          sLower === lowerClean ||
+          sBase === lowerClean ||
+          sLower.includes(lowerClean) ||
+          lowerClean.includes(sLower)
+        );
+      });
+
+      if (matchedIndex !== -1 && effectiveSources.length > 1) {
+        const docIdx = matchedIndex + 1;
+        citedSet.add(docIdx);
+        const label = endNum ? `${pageNum}-${endNum}` : pageNum;
+        return `[${docIdx} · ${unitShort}.${label}](#jump-idx-${docIdx}-${unit}-${pageNum})`;
+      }
+
+      const resolvedName =
+        matchedIndex !== -1 ? effectiveSources[matchedIndex].name : cleanDoc;
+      const displayUnit = slide ? "Slide" : "Page";
+      const displayRange = endNum ? `${pageNum}–${endNum}` : pageNum;
+      return `[${cleanDoc} • ${displayUnit} ${displayRange}](#jump-doc-${encodeJumpSegment(
+        resolvedName
+      )}-${unit}-${pageNum})`;
+    }
+
+    // 3. Bracketed [Slide 5], [Slide 5: Topic], [Slides 3-5], (Slide 4)
+    const m3 = match.match(branch3BracketUnit);
+    if (m3) {
+      return linkifyMultiNumbers(m3[1], m3[2], m3[3]);
+    }
+
+    // 4. Shorthand [s.5], [p.3-4]
+    const m4 = match.match(branch4ShortUnit);
+    if (m4) {
+      const slide = isSlideUnit(m4[1]);
+      const unit = slide ? "slide" : "page";
+      const displayUnit = slide ? "Slide" : "Page";
+      const label = m4[3]
+        ? `${displayUnit}s ${m4[2]}–${m4[3]}`
+        : `${displayUnit} ${m4[2]}`;
+      return `[${label}](#jump-${unit}-${m4[2]})`;
+    }
+
+    // 5. Bare Slide 5 / Slides 3, 5, and 7 / Slides 3-5
+    const m5 = match.match(branch5BareUnit);
+    if (m5) {
+      return linkifyMultiNumbers(m5[1], m5[2]);
+    }
+
+    // 6. Bare [1] / [Doc 2]
+    const m6 = match.match(branch6BareIdx);
+    if (m6) {
+      const barePrefix = m6[1] || "";
+      const docIdx = parseInt(m6[2], 10);
+      if (
+        effectiveSources.length > 1 &&
+        docIdx >= 1 &&
+        docIdx <= effectiveSources.length
+      ) {
+        citedSet.add(docIdx);
+        return `${barePrefix}[${docIdx}](#jump-idx-${docIdx}-page-0)`;
+      }
+      return match;
+    }
+
+    return match;
+  });
+
+  // Restore protected code blocks
+  formattedText = formattedText.replace(/\u0000CODEBLK_(\d+)\u0000/g, (_, idx) => {
+    return codePlaceholders[Number(idx)] ?? "";
+  });
 
   // Include footer sources in legend whenever multi-doc response used footer mapping
   if (footerSources.length > 1 && citedSet.size === 0) {

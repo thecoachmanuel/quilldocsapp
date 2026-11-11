@@ -336,6 +336,8 @@ export default function DocumentViewLayout({
           <div className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden flex flex-col">
             <ChatWrapper
               fileId={fileId}
+              docNames={fileName ? [fileName] : undefined}
+              docSources={[{ id: fileId, name: fileName || "Document" }]}
               isExpanded={isChatExpanded}
               planName={planName}
               pagesPerPdf={pagesPerPdf}

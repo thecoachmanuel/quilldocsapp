@@ -150,7 +150,25 @@ export default function MultiDocumentViewLayout({
       setIsDesktopChatHidden(false);
     };
 
-    const handleJumpToPage = () => {
+    const handleJumpToPage = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail?.type === "slide" && typeof detail?.page === "number") {
+        const activeIsPptx =
+          activeFile && /\.(pptx?|PPTX?)$/i.test(activeFile.name || "");
+        if (!activeIsPptx) {
+          const pptxTarget = selectedFiles.find((f) =>
+            /\.(pptx?|PPTX?)$/i.test(f.name || "")
+          );
+          if (pptxTarget && pptxTarget.id !== activeFile?.id) {
+            setActiveFileId(pptxTarget.id);
+            dispatchPageJump({
+              fileId: pptxTarget.id,
+              page: detail.page,
+              type: "slide",
+            });
+          }
+        }
+      }
       revealViewer();
     };
 
@@ -212,7 +230,7 @@ export default function MultiDocumentViewLayout({
       window.removeEventListener("quill:jump-to-page", handleJumpToPage);
       window.removeEventListener("quill:jump-to-doc", handleJumpToDoc);
     };
-  }, [selectedFiles, allUserFiles]);
+  }, [selectedFiles, allUserFiles, activeFile]);
 
   const openManageModal = () => {
     setTempSelectedIds(selectedFiles.map((f) => f.id));

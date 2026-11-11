@@ -19,12 +19,21 @@ export interface SlideElement {
     align?: "left" | "center" | "right" | "justify";
     bullet?: boolean;
     bulletChar?: string;
+    bulletColor?: string;
+    bulletSize?: number;
+    isNumbered?: boolean;
     level?: number;
+    indentLeft?: number;
+    spaceBefore?: number;
+    spaceAfter?: number;
+    lineHeight?: number;
     runs: Array<{
       text: string;
       bold?: boolean;
       italic?: boolean;
       underline?: boolean;
+      strikethrough?: boolean;
+      uppercase?: boolean;
       color?: string;
       size?: number;
       fontFamily?: string;
@@ -42,9 +51,11 @@ export interface SlideElement {
     }>
   >;
   bgColor?: string;
+  bgGradient?: string;
   borderColor?: string;
   borderWidth?: number;
   borderRadius?: number;
+  padding?: string;
   verticalAlign?: "top" | "center" | "bottom";
   rawText?: string;
 }
@@ -55,6 +66,7 @@ export interface RichSlide {
   content: string[];
   rawText: string;
   bgColor?: string;
+  bgGradient?: string;
   bgImage?: string;
   aspectRatio?: number;
   elements: SlideElement[];
@@ -197,12 +209,30 @@ export async function parseDocx(
 }
 
 /**
- * Helper to adjust hex color with luminance modification and luminance offset
+ * Helper to adjust hex color with OOXML luminance/tint/shade modifiers.
  */
-function adjustColor(hex: string, lumMod?: number, lumOff?: number): string {
+function adjustColor(
+  hex: string,
+  lumMod?: number,
+  lumOff?: number,
+  tint?: number,
+  shade?: number
+): string {
   let r = parseInt(hex.slice(0, 2), 16) || 0;
   let g = parseInt(hex.slice(2, 4), 16) || 0;
   let b = parseInt(hex.slice(4, 6), 16) || 0;
+  if (shade !== undefined) {
+    const f = shade / 100000;
+    r = Math.round(r * f);
+    g = Math.round(g * f);
+    b = Math.round(b * f);
+  }
+  if (tint !== undefined) {
+    const f = tint / 100000;
+    r = Math.round(r + (255 - r) * (1 - f));
+    g = Math.round(g + (255 - g) * (1 - f));
+    b = Math.round(b + (255 - b) * (1 - f));
+  }
   if (lumMod !== undefined) {
     const factor = lumMod / 100000;
     r = Math.round(r * factor);
@@ -211,11 +241,180 @@ function adjustColor(hex: string, lumMod?: number, lumOff?: number): string {
   }
   if (lumOff !== undefined) {
     const offset = (lumOff / 100000) * 255;
-    r = Math.min(255, Math.max(0, Math.round(r + offset)));
-    g = Math.min(255, Math.max(0, Math.round(g + offset)));
-    b = Math.min(255, Math.max(0, Math.round(b + offset)));
+    r = Math.round(r + offset);
+    g = Math.round(g + offset);
+    b = Math.round(b + offset);
   }
+  r = Math.min(255, Math.max(0, r));
+  g = Math.min(255, Math.max(0, g));
+  b = Math.min(255, Math.max(0, b));
   return ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+const OOXML_PRESET_COLORS: Record<string, string> = {
+  black: "000000",
+  white: "ffffff",
+  red: "ff0000",
+  green: "008000",
+  blue: "0000ff",
+  yellow: "ffff00",
+  cyan: "00ffff",
+  magenta: "ff00ff",
+  gray: "808080",
+  grey: "808080",
+  dkGray: "404040",
+  ltGray: "c0c0c0",
+  silver: "c0c0c0",
+  navy: "000080",
+  orange: "ffa500",
+  purple: "800080",
+  teal: "008080",
+};
+
+function toRomanNumeral(num: number, upper: boolean): string {
+  const table: Array<[number, string]> = [
+    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
+    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
+    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+  ];
+  let rem = Math.max(1, Math.floor(num));
+  let res = "";
+  for (const [val, sym] of table) {
+    while (rem >= val) {
+      res += sym;
+      rem -= val;
+    }
+  }
+  return upper ? res : res.toLowerCase();
+}
+
+function toAlphaNumeral(num: number, upper: boolean): string {
+  let n = Math.max(1, Math.floor(num));
+  let res = "";
+  while (n > 0) {
+    n -= 1;
+    res = String.fromCharCode((upper ? 65 : 97) + (n % 26)) + res;
+    n = Math.floor(n / 26);
+  }
+  return res;
+}
+
+function formatAutoNumber(num: number, autoNumType?: string): string {
+  const t = autoNumType || "arabicPeriod";
+  const val = Math.max(1, num);
+  switch (t) {
+    case "arabicParenR":
+      return `${val})`;
+    case "arabicParenBoth":
+      return `(${val})`;
+    case "arabicPlain":
+      return `${val}`;
+    case "alphaLcPeriod":
+      return `${toAlphaNumeral(val, false)}.`;
+    case "alphaLcParenR":
+      return `${toAlphaNumeral(val, false)})`;
+    case "alphaLcParenBoth":
+      return `(${toAlphaNumeral(val, false)})`;
+    case "alphaUcPeriod":
+      return `${toAlphaNumeral(val, true)}.`;
+    case "alphaUcParenR":
+      return `${toAlphaNumeral(val, true)})`;
+    case "alphaUcParenBoth":
+      return `(${toAlphaNumeral(val, true)})`;
+    case "romanLcPeriod":
+      return `${toRomanNumeral(val, false)}.`;
+    case "romanLcParenR":
+      return `${toRomanNumeral(val, false)})`;
+    case "romanLcParenBoth":
+      return `(${toRomanNumeral(val, false)})`;
+    case "romanUcPeriod":
+      return `${toRomanNumeral(val, true)}.`;
+    case "romanUcParenR":
+      return `${toRomanNumeral(val, true)})`;
+    case "romanUcParenBoth":
+      return `(${toRomanNumeral(val, true)})`;
+    case "circleNumDbPlain":
+    case "circleNumWdBlackPlain":
+    case "circleNumWdWhitePlain":
+      return val <= 20 ? String.fromCharCode(0x245f + val) : `${val}.`;
+    case "arabicPeriod":
+    default:
+      return `${val}.`;
+  }
+}
+
+/**
+ * Normalizes Wingdings/Symbol/Webdings/Private-Use-Area OOXML bullet characters
+ * into crisp standard Unicode symbols so bullets never render as ASCII letters or boxes.
+ */
+function normalizeBulletChar(rawChar?: string, bulletFont?: string): string | undefined {
+  if (!rawChar) return undefined;
+  const ch = decodeXmlEntities(rawChar);
+  const code = ch.charCodeAt(0);
+  const lowerFont = (bulletFont || "").toLowerCase();
+
+  // Map Windows Private-Use-Area F0xx bullet glyphs to standard Unicode
+  const puaMap: Record<number, string> = {
+    0xf0b7: "•",
+    0xf02d: "-",
+    0xf06c: "•",
+    0xf06e: "▪",
+    0xf06f: "◦",
+    0xf070: "▪",
+    0xf071: "❑",
+    0xf072: "❑",
+    0xf075: "◆",
+    0xf076: "❖",
+    0xf077: "▪",
+    0xf0a7: "▪",
+    0xf0a8: "◆",
+    0xf0ab: "«",
+    0xf0b0: "◦",
+    0xf0bb: "»",
+    0xf0d8: "➢",
+    0xf0e0: "➔",
+    0xf0e8: "→",
+    0xf0fc: "✓",
+    0xf0fe: "☑",
+  };
+  if (puaMap[code]) return puaMap[code];
+
+  if (
+    lowerFont.includes("wingding") ||
+    lowerFont.includes("webding") ||
+    lowerFont.includes("symbol") ||
+    lowerFont.includes("dingbat")
+  ) {
+    const asciiSymbolMap: Record<string, string> = {
+      l: "•",
+      n: "▪",
+      o: "▫",
+      p: "▪",
+      q: "❑",
+      r: "❑",
+      s: "▲",
+      t: "▼",
+      u: "◆",
+      v: "❖",
+      w: "▪",
+      ü: "✓",
+      þ: "☑",
+      Ø: "➢",
+      "§": "▪",
+      "¨": "◆",
+      "·": "•",
+      "»": "»",
+      à: "➔",
+      è: "→",
+    };
+    if (asciiSymbolMap[ch]) return asciiSymbolMap[ch];
+    if (code >= 0xe000 && code <= 0xf8ff) return "•";
+    if (/^[a-zA-Z0-9]$/.test(ch)) return "•";
+  }
+
+  if (code >= 0xe000 && code <= 0xf8ff) return "•";
+  if (ch === "§") return "▪";
+  return ch;
 }
 
 interface SpTreeToken {
@@ -228,9 +427,24 @@ interface LevelStyleDefaults {
   color?: string;
   align?: "left" | "center" | "right" | "justify";
   fontFamily?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  uppercase?: boolean;
   bullet?: boolean;
   buNone?: boolean;
   bulletChar?: string;
+  bulletFont?: string;
+  bulletColor?: string;
+  bulletSizePct?: number;
+  autoNumType?: string;
+  autoNumStartAt?: number;
+  marL?: number;
+  indent?: number;
+  spcBef?: number;
+  spcAft?: number;
+  lnSpcPct?: number;
 }
 
 interface PlaceholderLayoutDef {
@@ -241,11 +455,15 @@ interface PlaceholderLayoutDef {
   cx?: number;
   cy?: number;
   shapeBg?: string;
+  shapeBgGradient?: string;
   borderColor?: string;
   borderWidth?: number;
   borderRadius?: number;
+  padding?: string;
   verticalAlign?: "top" | "center" | "bottom";
   lvlStyles?: Record<number, LevelStyleDefaults>;
+  styleFontColor?: string;
+  styleFontIdx?: "major" | "minor";
 }
 
 /**
@@ -473,9 +691,11 @@ export function parsePptx(buffer: Buffer): {
     const sldWidthPt = sldWidth / 12700;
     const ptScale =
       sldWidthPt > 0 ? Math.min(1.35, Math.max(0.45, 960 / sldWidthPt)) : 1;
+    const emuToPx = (emu: number) =>
+      sldWidth > 0 ? (emu / sldWidth) * 960 : emu / 12700;
     const baseHeight = Math.max(400, Math.round(960 / aspectRatio));
 
-    // 2. Extract theme colors from ppt/theme/theme*.xml
+    // 2. Extract theme colors & font scheme from ppt/theme/theme*.xml
     const themeColors: Record<string, string> = {
       dk1: "000000",
       lt1: "ffffff",
@@ -490,6 +710,7 @@ export function parsePptx(buffer: Buffer): {
       hlink: "2563eb",
       folHlink: "7c3aed",
     };
+    const themeFonts: { major?: string; minor?: string } = {};
 
     try {
       const themeEntry = zipEntries.find((e) =>
@@ -511,6 +732,10 @@ export function parsePptx(buffer: Buffer): {
             themeColors[name] = m[1] || m[2];
           }
         }
+        const majorM = tXml.match(/<a:majorFont>[\s\S]*?<a:latin[^>]*typeface="([^"]+)"/i);
+        const minorM = tXml.match(/<a:minorFont>[\s\S]*?<a:latin[^>]*typeface="([^"]+)"/i);
+        if (majorM?.[1]) themeFonts.major = majorM[1];
+        if (minorM?.[1]) themeFonts.minor = minorM[1];
       }
     } catch {}
 
@@ -519,27 +744,311 @@ export function parsePptx(buffer: Buffer): {
     themeColors.bg2 = themeColors.lt2 || "f3f4f6";
     themeColors.tx2 = themeColors.dk2 || "1f2937";
 
+    const resolveFontName = (rawFont?: string): string | undefined => {
+      if (!rawFont) return undefined;
+      if (/^\+mj-/i.test(rawFont)) return themeFonts.major;
+      if (/^\+mn-/i.test(rawFont)) return themeFonts.minor;
+      return rawFont;
+    };
+
     const resolveColor = (xmlChunk?: string): string | undefined => {
       if (!xmlChunk) return undefined;
-      const srgb = xmlChunk.match(/<a:srgbClr\s+val="([0-9a-fA-F]{6})"/i);
-      if (srgb) return `#${srgb[1]}`;
-      const scheme = xmlChunk.match(/<a:schemeClr\s+val="([^"]+)"/i);
-      if (scheme && themeColors[scheme[1]]) {
-        let hex = themeColors[scheme[1]];
-        const lumMod = xmlChunk.match(/<a:lumMod\s+val="(\d+)"/);
-        const lumOff = xmlChunk.match(/<a:lumOff\s+val="(\d+)"/);
-        if (lumMod || lumOff) {
-          hex = adjustColor(
-            hex,
-            lumMod ? parseInt(lumMod[1], 10) : undefined,
-            lumOff ? parseInt(lumOff[1], 10) : undefined
-          );
+      let hex: string | undefined;
+
+      const srgb = xmlChunk.match(/<a:srgbClr[^>]*val="([0-9a-fA-F]{6})"/i);
+      if (srgb) {
+        hex = srgb[1];
+      } else {
+        const scheme = xmlChunk.match(/<a:schemeClr[^>]*val="([^"]+)"/i);
+        if (scheme && themeColors[scheme[1]]) {
+          hex = themeColors[scheme[1]];
+        } else {
+          const sys = xmlChunk.match(/<a:sysClr[^>]*lastClr="([0-9a-fA-F]{6})"/i);
+          if (sys) {
+            hex = sys[1];
+          } else {
+            const prst = xmlChunk.match(/<a:prstClr[^>]*val="([^"]+)"/i);
+            if (prst && OOXML_PRESET_COLORS[prst[1]]) {
+              hex = OOXML_PRESET_COLORS[prst[1]];
+            }
+          }
         }
-        return `#${hex}`;
       }
-      const sys = xmlChunk.match(/<a:sysClr[^>]*lastClr="([0-9a-fA-F]{6})"/i);
-      if (sys) return `#${sys[1]}`;
-      return undefined;
+
+      if (!hex) return undefined;
+
+      const lumMod = xmlChunk.match(/<a:lumMod\s+val="(\d+)"/);
+      const lumOff = xmlChunk.match(/<a:lumOff\s+val="(\d+)"/);
+      const tint = xmlChunk.match(/<a:tint\s+val="(\d+)"/);
+      const shade = xmlChunk.match(/<a:shade\s+val="(\d+)"/);
+      if (lumMod || lumOff || tint || shade) {
+        hex = adjustColor(
+          hex,
+          lumMod ? parseInt(lumMod[1], 10) : undefined,
+          lumOff ? parseInt(lumOff[1], 10) : undefined,
+          tint ? parseInt(tint[1], 10) : undefined,
+          shade ? parseInt(shade[1], 10) : undefined
+        );
+      }
+
+      const alphaM = xmlChunk.match(/<a:alpha\s+val="(\d+)"/);
+      if (alphaM) {
+        const alpha = Math.min(1, Math.max(0, parseInt(alphaM[1], 10) / 100000));
+        if (alpha < 0.99) {
+          const r = parseInt(hex.slice(0, 2), 16) || 0;
+          const g = parseInt(hex.slice(2, 4), 16) || 0;
+          const b = parseInt(hex.slice(4, 6), 16) || 0;
+          return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+        }
+      }
+
+      return `#${hex}`;
+    };
+
+    const resolveGradientCss = (gradXml?: string): string | undefined => {
+      if (!gradXml) return undefined;
+      const gsMatches = Array.from(
+        gradXml.matchAll(/<a:gs\s+pos="(\d+)"[^>]*>([\s\S]*?)<\/a:gs>/gi)
+      );
+      if (gsMatches.length < 2) return undefined;
+
+      const stops = gsMatches
+        .map((m) => {
+          const pct = Math.min(100, Math.max(0, Math.round(parseInt(m[1], 10) / 1000)));
+          const clr = resolveColor(m[2]);
+          return clr ? { pct, clr } : null;
+        })
+        .filter((s): s is { pct: number; clr: string } => Boolean(s))
+        .sort((a, b) => a.pct - b.pct);
+
+      if (stops.length < 2) return undefined;
+      const linM = gradXml.match(/<a:lin[^>]*ang="(\d+)"/i);
+      // OOXML gradient angles increase clockwise from +X (left-to-right); CSS 90deg is left-to-right
+      const ooxmlDeg = linM ? parseInt(linM[1], 10) / 60000 : 0;
+      const cssDeg = Math.round((ooxmlDeg + 90) % 360);
+      return `linear-gradient(${cssDeg}deg, ${stops.map((s) => `${s.clr} ${s.pct}%`).join(", ")})`;
+    };
+
+    const parseRunFlags = (rPrOrDefXml: string) => {
+      const bMatch = rPrOrDefXml.match(/\bb="([01])"/);
+      const iMatch = rPrOrDefXml.match(/\bi="([01])"/);
+      const uMatch = rPrOrDefXml.match(/\bu="([^"]+)"/);
+      const sMatch = rPrOrDefXml.match(/\bstrike="([^"]+)"/);
+      const capMatch = rPrOrDefXml.match(/\bcap="([^"]+)"/);
+      return {
+        bold: bMatch ? bMatch[1] === "1" : undefined,
+        italic: iMatch ? iMatch[1] === "1" : undefined,
+        underline: uMatch ? uMatch[1] !== "none" : undefined,
+        strikethrough: sMatch ? sMatch[1] !== "noStrike" : undefined,
+        uppercase: capMatch ? capMatch[1] === "all" || capMatch[1] === "small" : undefined,
+      };
+    };
+
+    const parseRunFontFamily = (xmlChunk: string): string | undefined => {
+      const m =
+        xmlChunk.match(/<a:latin[^>]*typeface="([^"]+)"/i) ||
+        xmlChunk.match(/<a:cs[^>]*typeface="([^"]+)"/i) ||
+        xmlChunk.match(/<a:ea[^>]*typeface="([^"]+)"/i);
+      return resolveFontName(m?.[1]);
+    };
+
+    const parseVisualBoxStyle = (spXml: string) => {
+      const spPrXml = spXml.match(/<p:spPr>([\s\S]*?)<\/p:spPr>/i)?.[1] || "";
+      const styleXml = spXml.match(/<p:style>([\s\S]*?)<\/p:style>/i)?.[1] || "";
+      const txBodyXml = spXml.match(/<p:txBody>([\s\S]*?)<\/p:txBody>/i)?.[1] || "";
+
+      const spPrNoLn = spPrXml.replace(/<a:ln[\s>][\s\S]*?<\/a:ln>/gi, "");
+      const hasExplicitNoFill = /<a:noFill\b/i.test(spPrNoLn);
+      let shapeBg: string | undefined;
+      let shapeBgGradient: string | undefined;
+
+      if (!hasExplicitNoFill) {
+        const solidM = spPrNoLn.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i);
+        const gradM = spPrNoLn.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
+        if (solidM) {
+          shapeBg = resolveColor(solidM[0]);
+        } else if (gradM) {
+          shapeBgGradient = resolveGradientCss(gradM[0]);
+          shapeBg = resolveColor(gradM[0]);
+        } else if (styleXml) {
+          const fillRefM = styleXml.match(/<a:fillRef([^>]*)>([\s\S]*?)<\/a:fillRef>/i);
+          if (fillRefM && !/idx="0"/.test(fillRefM[1])) {
+            shapeBg = resolveColor(fillRefM[2]);
+          }
+        }
+      }
+
+      let borderColor: string | undefined;
+      let borderWidth: number | undefined;
+      const lnM = spPrXml.match(/<a:ln([^>]*)>([\s\S]*?)<\/a:ln>/i);
+      if (lnM) {
+        if (!/<a:noFill\b/i.test(lnM[2])) {
+          const lc = resolveColor(lnM[2]);
+          if (lc) {
+            borderColor = lc;
+            const wM = lnM[1].match(/w="(\d+)"/);
+            borderWidth = wM
+              ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
+              : 1;
+          }
+        }
+      } else if (styleXml) {
+        const lnRefM = styleXml.match(/<a:lnRef([^>]*)>([\s\S]*?)<\/a:lnRef>/i);
+        if (lnRefM && !/idx="0"/.test(lnRefM[1])) {
+          const lc = resolveColor(lnRefM[2]);
+          if (lc) {
+            borderColor = lc;
+            borderWidth = 1;
+          }
+        }
+      }
+
+      let borderRadius: number | undefined;
+      if (spPrXml.includes('prst="ellipse"')) borderRadius = 9999;
+      else if (spPrXml.includes('prst="roundRect"')) borderRadius = 12;
+
+      const fontRefM = styleXml.match(/<a:fontRef([^>]*)>([\s\S]*?)<\/a:fontRef>/i);
+      const styleFontColor = fontRefM ? resolveColor(fontRefM[2]) : undefined;
+      const styleFontIdx: "major" | "minor" | undefined = fontRefM
+        ? /idx="major"/.test(fontRefM[1])
+          ? "major"
+          : /idx="minor"/.test(fontRefM[1])
+            ? "minor"
+            : undefined
+        : undefined;
+
+      const bodyPrXml =
+        txBodyXml.match(
+          /<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i
+        )?.[0] || "";
+      const anchorM = bodyPrXml.match(/anchor="([^"]+)"/);
+      const verticalAlign: "top" | "center" | "bottom" | undefined =
+        anchorM?.[1] === "ctr"
+          ? "center"
+          : anchorM?.[1] === "b"
+            ? "bottom"
+            : anchorM?.[1] === "t"
+              ? "top"
+              : undefined;
+
+      let padding: string | undefined;
+      const lInsM = bodyPrXml.match(/\blIns="(\d+)"/);
+      const tInsM = bodyPrXml.match(/\btIns="(\d+)"/);
+      const rInsM = bodyPrXml.match(/\brIns="(\d+)"/);
+      const bInsM = bodyPrXml.match(/\bbIns="(\d+)"/);
+      if (lInsM || tInsM || rInsM || bInsM) {
+        const clampPad = (v?: string, fallbackPx = 4) =>
+          v !== undefined
+            ? Math.min(28, Math.max(0, Math.round(emuToPx(parseInt(v, 10)))))
+            : fallbackPx;
+        const pTop = clampPad(tInsM?.[1], 2);
+        const pRight = clampPad(rInsM?.[1], 6);
+        const pBottom = clampPad(bInsM?.[1], 2);
+        const pLeft = clampPad(lInsM?.[1], 6);
+        padding = `${pTop}px ${pRight}px ${pBottom}px ${pLeft}px`;
+      }
+
+      return {
+        spPrXml,
+        txBodyXml,
+        bodyPrXml,
+        hasExplicitNoFill,
+        shapeBg,
+        shapeBgGradient,
+        borderColor,
+        borderWidth,
+        borderRadius,
+        verticalAlign,
+        padding,
+        styleFontColor,
+        styleFontIdx,
+      };
+    };
+
+    const parseParagraphProps = (pPrAttr: string, pPrInner: string): LevelStyleDefaults => {
+      const combined = `<a:pPr ${pPrAttr}>${pPrInner}</a:pPr>`;
+
+      let align: LevelStyleDefaults["align"];
+      if (pPrAttr.includes('algn="ctr"')) align = "center";
+      else if (pPrAttr.includes('algn="r"')) align = "right";
+      else if (pPrAttr.includes('algn="just"')) align = "justify";
+      else if (pPrAttr.includes('algn="l"')) align = "left";
+
+      const marLM = pPrAttr.match(/\bmarL="(-?\d+)"/);
+      const indentM = pPrAttr.match(/\bindent="(-?\d+)"/);
+      const marL = marLM
+        ? Math.max(0, Math.round(emuToPx(parseInt(marLM[1], 10))))
+        : undefined;
+      const indent = indentM ? Math.round(emuToPx(parseInt(indentM[1], 10))) : undefined;
+
+      const spcBefM = pPrInner.match(/<a:spcBef>[\s\S]*?<a:spcPts\s+val="(\d+)"/i);
+      const spcAftM = pPrInner.match(/<a:spcAft>[\s\S]*?<a:spcPts\s+val="(\d+)"/i);
+      const spcBef = spcBefM
+        ? Math.min(28, Math.max(0, Math.round((parseInt(spcBefM[1], 10) / 100) * ptScale)))
+        : undefined;
+      const spcAft = spcAftM
+        ? Math.min(28, Math.max(0, Math.round((parseInt(spcAftM[1], 10) / 100) * ptScale)))
+        : undefined;
+
+      const lnSpcM = pPrInner.match(/<a:lnSpc>[\s\S]*?<a:spcPct\s+val="(\d+)"/i);
+      const lnSpcPct = lnSpcM
+        ? Math.min(220, Math.max(95, Math.round(parseInt(lnSpcM[1], 10) / 1000)))
+        : undefined;
+
+      const defRPrXml =
+        pPrInner.match(
+          /<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>|<a:defRPr[^>]*\/>/i
+        )?.[0] || "";
+      const szM = defRPrXml.match(/\bsz="(\d+)"/);
+      const fontSize = szM
+        ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
+        : undefined;
+      const color = resolveColor(defRPrXml);
+      const fontFamily = parseRunFontFamily(defRPrXml);
+      const flags = parseRunFlags(defRPrXml);
+
+      const buNone = /<a:buNone\b/i.test(combined);
+      const buFontM = combined.match(/<a:buFont[^>]*typeface="([^"]*)"/i);
+      const bulletFont = buFontM?.[1];
+      const buCharM = combined.match(/<a:buChar[^>]*char="([^"]*)"/i);
+      const buAutoNumM = combined.match(/<a:buAutoNum([^>]*)\/?>/i);
+      const autoNumType = buAutoNumM?.[1]?.match(/type="([^"]+)"/)?.[1] || (buAutoNumM ? "arabicPeriod" : undefined);
+      const startAtM = buAutoNumM?.[1]?.match(/startAt="(\d+)"/);
+      const autoNumStartAt = startAtM ? parseInt(startAtM[1], 10) : undefined;
+
+      const buClrM = combined.match(/<a:buClr>([\s\S]*?)<\/a:buClr>/i);
+      const bulletColor = buClrM ? resolveColor(buClrM[1]) : undefined;
+      const buSzPctM = combined.match(/<a:buSzPct\s+val="(\d+)"/i);
+      const bulletSizePct = buSzPctM
+        ? Math.min(200, Math.max(50, Math.round(parseInt(buSzPctM[1], 10) / 1000)))
+        : undefined;
+
+      const bullet =
+        !buNone && (Boolean(buCharM) || Boolean(buAutoNumM));
+      const bulletChar = buCharM?.[1]
+        ? normalizeBulletChar(buCharM[1], bulletFont)
+        : undefined;
+
+      return {
+        fontSize,
+        color,
+        align,
+        fontFamily,
+        ...flags,
+        bullet,
+        buNone,
+        bulletChar,
+        bulletFont,
+        bulletColor,
+        bulletSizePct,
+        autoNumType,
+        autoNumStartAt,
+        marL,
+        indent,
+        spcBef,
+        spcAft,
+        lnSpcPct,
+      };
     };
 
     const parseLevelStyles = (
@@ -559,41 +1068,7 @@ export function parsePptx(buffer: Buffer): {
         if (!lvlM) continue;
         const pPrAttr = lvlM[1] || lvlM[3] || "";
         const pPrInner = lvlM[2] || "";
-        const combined = `<a:lvlpPr ${pPrAttr}>${pPrInner}</a:lvlpPr>`;
-
-        let align: LevelStyleDefaults["align"];
-        if (pPrAttr.includes('algn="ctr"')) align = "center";
-        else if (pPrAttr.includes('algn="r"')) align = "right";
-        else if (pPrAttr.includes('algn="just"')) align = "justify";
-        else if (pPrAttr.includes('algn="l"')) align = "left";
-
-        const defRPrXml =
-          pPrInner.match(
-            /<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>|<a:defRPr[^>]*\/>/i
-          )?.[0] || "";
-        const szM = defRPrXml.match(/sz="(\d+)"/);
-        const fontSize = szM
-          ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
-          : undefined;
-        const color = resolveColor(defRPrXml);
-        const fontM = defRPrXml.match(/<a:latin\s+typeface="([^"+][^"]*)"/);
-        const fontFamily = fontM ? fontM[1] : undefined;
-
-        const buNone = combined.includes("<a:buNone");
-        const buCharM = combined.match(/<a:buChar\s+[^>]*char="([^"]*)"/i);
-        const bullet =
-          !buNone &&
-          (Boolean(buCharM) || combined.includes("<a:buAutoNum"));
-
-        levels[lvlIdx] = {
-          fontSize,
-          color,
-          align,
-          fontFamily,
-          bullet,
-          buNone,
-          bulletChar: buCharM?.[1] ? decodeXmlEntities(buCharM[1]) : undefined,
-        };
+        levels[lvlIdx] = parseParagraphProps(pPrAttr, pPrInner);
       }
 
       // Also parse <a:defPPr> if present as level 0 fallback
@@ -602,19 +1077,16 @@ export function parsePptx(buffer: Buffer): {
           /<a:defPPr([^>]*)>([\s\S]*?)<\/a:defPPr>/i
         );
         if (defM) {
-          const defRPr = defM[2].match(/<a:defRPr[\s\S]*?(?:<\/a:defRPr>|\/>)/i)?.[0] || "";
-          const szM = defRPr.match(/sz="(\d+)"/);
-          levels[0] = {
-            fontSize: szM
-              ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
-              : undefined,
-            color: resolveColor(defRPr),
-          };
+          levels[0] = parseParagraphProps(defM[1] || "", defM[2] || "");
         }
       }
 
       return levels;
     };
+
+    const presDefaultTextStyleXml =
+      presXml.match(/<p:defaultTextStyle>([\s\S]*?)<\/p:defaultTextStyle>/i)?.[1] || "";
+    const presDefaultStyles = parseLevelStyles(presDefaultTextStyleXml);
 
     const extractPlaceholdersFromXml = (
       rawXml: string
@@ -648,56 +1120,11 @@ export function parsePptx(buffer: Buffer): {
           const phType = typeM?.[1];
           const phIdx = idxM?.[1];
 
-          const spPr =
-            tok.innerXml.match(/<p:spPr>([\s\S]*?)<\/p:spPr>/i)?.[1] || "";
-          const offM = spPr.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
-          const extM = spPr.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
-
-          const spPrNoLn = spPr.replace(/<a:ln[\s>][\s\S]*?<\/a:ln>/gi, "");
-          let shapeBg: string | undefined;
-          if (!spPrNoLn.includes("<a:noFill")) {
-            const sfM =
-              spPrNoLn.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
-              spPrNoLn.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
-            if (sfM) shapeBg = resolveColor(sfM[0]);
-          }
-
-          let borderColor: string | undefined;
-          let borderWidth: number | undefined;
-          const lnM = spPr.match(/<a:ln([^>]*)>([\s\S]*?)<\/a:ln>/i);
-          if (lnM && !lnM[2].includes("<a:noFill")) {
-            const lc = resolveColor(lnM[2]);
-            if (lc) {
-              borderColor = lc;
-              const wM = lnM[1].match(/w="(\d+)"/);
-              borderWidth = wM
-                ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
-                : 1;
-            }
-          }
-
-          let borderRadius: number | undefined;
-          if (spPr.includes('prst="ellipse"')) borderRadius = 9999;
-          else if (spPr.includes('prst="roundRect"')) borderRadius = 12;
-
-          const txBody =
-            tok.innerXml.match(/<p:txBody>([\s\S]*?)<\/p:txBody>/i)?.[1] || "";
-          const bodyPr =
-            txBody.match(
-              /<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i
-            )?.[0] || "";
-          const anchorM = bodyPr.match(/anchor="([^"]+)"/);
-          const verticalAlign: PlaceholderLayoutDef["verticalAlign"] =
-            anchorM?.[1] === "ctr"
-              ? "center"
-              : anchorM?.[1] === "b"
-                ? "bottom"
-                : anchorM?.[1] === "t"
-                  ? "top"
-                  : undefined;
-
+          const boxStyle = parseVisualBoxStyle(tok.innerXml);
+          const offM = boxStyle.spPrXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
+          const extM = boxStyle.spPrXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
           const lstStyleXml =
-            txBody.match(/<a:lstStyle>([\s\S]*?)<\/a:lstStyle>/i)?.[1] || "";
+            boxStyle.txBodyXml.match(/<a:lstStyle>([\s\S]*?)<\/a:lstStyle>/i)?.[1] || "";
           const lvlStyles = parseLevelStyles(lstStyleXml);
 
           const def: PlaceholderLayoutDef = {
@@ -707,12 +1134,16 @@ export function parsePptx(buffer: Buffer): {
             y: offM ? parseInt(offM[2], 10) : undefined,
             cx: extM ? parseInt(extM[1], 10) : undefined,
             cy: extM ? parseInt(extM[2], 10) : undefined,
-            shapeBg,
-            borderColor,
-            borderWidth,
-            borderRadius,
-            verticalAlign,
+            shapeBg: boxStyle.shapeBg,
+            shapeBgGradient: boxStyle.shapeBgGradient,
+            borderColor: boxStyle.borderColor,
+            borderWidth: boxStyle.borderWidth,
+            borderRadius: boxStyle.borderRadius,
+            padding: boxStyle.padding,
+            verticalAlign: boxStyle.verticalAlign,
             lvlStyles,
+            styleFontColor: boxStyle.styleFontColor,
+            styleFontIdx: boxStyle.styleFontIdx,
           };
 
           if (phIdx && !byIdx[phIdx]) byIdx[phIdx] = def;
@@ -728,7 +1159,7 @@ export function parsePptx(buffer: Buffer): {
       xmlChunk: string,
       rels: Record<string, { type: string; target: string }>,
       mediaMapObj: Record<string, string>
-    ): { bgColor?: string; bgImage?: string } => {
+    ): { bgColor?: string; bgGradient?: string; bgImage?: string } => {
       const bgMatch = xmlChunk.match(/<p:bg>([\s\S]*?)<\/p:bg>/i);
       if (!bgMatch) return {};
       const bgInner = bgMatch[1];
@@ -741,15 +1172,19 @@ export function parsePptx(buffer: Buffer): {
       }
 
       let bgColor: string | undefined;
-      const solidOrGrad =
+      let bgGradient: string | undefined;
+      const gradMatch = bgInner.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
+      const solidMatch =
         bgInner.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
-        bgInner.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i) ||
         bgInner.match(/<p:bgRef[^>]*>([\s\S]*?)<\/p:bgRef>/i);
-      if (solidOrGrad) {
-        bgColor = resolveColor(solidOrGrad[0]);
+      if (gradMatch) {
+        bgGradient = resolveGradientCss(gradMatch[0]);
+        bgColor = resolveColor(gradMatch[0]);
+      } else if (solidMatch) {
+        bgColor = resolveColor(solidMatch[0]);
       }
 
-      return { bgColor, bgImage };
+      return { bgColor, bgGradient, bgImage };
     };
 
     // 3. Pre-index all media images in the PPTX archive by normalized full entry path (`ppt/media/...`)
@@ -938,7 +1373,7 @@ export function parsePptx(buffer: Buffer): {
         layoutData?.masterPath || "ppt/slideMasters/slideMaster1.xml";
       const masterData = getMasterData(masterPath);
 
-      // Extract slide background color/image via inheritance: slide -> layout -> master
+      // Extract slide background color, gradient, or image via inheritance: slide -> layout -> master
       const slideBg = parseBackgroundFromXml(xml, relsMap, mediaMap);
       const layBg = layoutData
         ? parseBackgroundFromXml(layoutData.xml, layoutData.rels, mediaMap)
@@ -951,6 +1386,9 @@ export function parsePptx(buffer: Buffer): {
 
       const bgColor =
         slideBg.bgColor || layBg.bgColor || masBg.bgColor || "#ffffff";
+      const bgGradient =
+        slideBg.bgGradient ||
+        (!slideBg.bgColor ? layBg.bgGradient || (!layBg.bgColor ? masBg.bgGradient : undefined) : undefined);
       const bgImage = slideBg.bgImage || layBg.bgImage || masBg.bgImage;
 
       const defaultTitleSize =
@@ -958,9 +1396,29 @@ export function parsePptx(buffer: Buffer): {
       const defaultTitleColor =
         masterData.titleStyles[0]?.color || `#${themeColors.tx1}`;
       const defaultBodySize =
-        masterData.bodyStyles[0]?.fontSize || Math.round(20 * ptScale);
+        masterData.bodyStyles[0]?.fontSize ||
+        presDefaultStyles[0]?.fontSize ||
+        Math.round(20 * ptScale);
       const defaultBodyColor =
-        masterData.bodyStyles[0]?.color || `#${themeColors.tx1}`;
+        masterData.bodyStyles[0]?.color ||
+        presDefaultStyles[0]?.color ||
+        `#${themeColors.tx1}`;
+
+      const mergeLevelStyle = (
+        base?: LevelStyleDefaults,
+        override?: LevelStyleDefaults
+      ): LevelStyleDefaults | undefined => {
+        if (!base && !override) return undefined;
+        const merged: LevelStyleDefaults = { ...base };
+        if (override) {
+          for (const [k, v] of Object.entries(override)) {
+            if (v !== undefined) {
+              (merged as any)[k] = v;
+            }
+          }
+        }
+        return merged;
+      };
 
       const lookupPlaceholder = (
         phType?: string,
@@ -978,9 +1436,36 @@ export function parsePptx(buffer: Buffer): {
           if (phType === "obj" && map.byType["body"]) return map.byType["body"];
           return undefined;
         };
-        return (
-          findIn(layoutData?.placeholders) || findIn(masterData.placeholders)
-        );
+        const layPh = findIn(layoutData?.placeholders);
+        const masPh = findIn(masterData.placeholders);
+        if (!layPh && !masPh) return undefined;
+        if (!layPh) return masPh;
+        if (!masPh) return layPh;
+
+        const mergedLevels: Record<number, LevelStyleDefaults> = {};
+        for (let lvl = 0; lvl <= 8; lvl++) {
+          const m = mergeLevelStyle(masPh.lvlStyles?.[lvl], layPh.lvlStyles?.[lvl]);
+          if (m) mergedLevels[lvl] = m;
+        }
+
+        return {
+          type: layPh.type ?? masPh.type,
+          idx: layPh.idx ?? masPh.idx,
+          x: layPh.x ?? masPh.x,
+          y: layPh.y ?? masPh.y,
+          cx: layPh.cx ?? masPh.cx,
+          cy: layPh.cy ?? masPh.cy,
+          shapeBg: layPh.shapeBg ?? masPh.shapeBg,
+          shapeBgGradient: layPh.shapeBgGradient ?? masPh.shapeBgGradient,
+          borderColor: layPh.borderColor ?? masPh.borderColor,
+          borderWidth: layPh.borderWidth ?? masPh.borderWidth,
+          borderRadius: layPh.borderRadius ?? masPh.borderRadius,
+          padding: layPh.padding ?? masPh.padding,
+          verticalAlign: layPh.verticalAlign ?? masPh.verticalAlign,
+          lvlStyles: mergedLevels,
+          styleFontColor: layPh.styleFontColor ?? masPh.styleFontColor,
+          styleFontIdx: layPh.styleFontIdx ?? masPh.styleFontIdx,
+        };
       };
 
       const elements: SlideElement[] = [];
@@ -1258,16 +1743,15 @@ export function parsePptx(buffer: Buffer): {
             const spXml = tok.innerXml;
             const nvSpPrXml =
               spXml.match(/<p:nvSpPr>([\s\S]*?)<\/p:nvSpPr>/i)?.[1] || "";
-            const spPrXml =
-              spXml.match(/<p:spPr>([\s\S]*?)<\/p:spPr>/i)?.[1] || "";
-            const txBodyXml =
-              spXml.match(/<p:txBody>([\s\S]*?)<\/p:txBody>/i)?.[1] || "";
 
             const phM = nvSpPrXml.match(/<p:ph\s+([^>]*?)\/?>/i);
             const phAttrs = phM?.[1] || "";
             const phType = phAttrs.match(/type="([^"]+)"/)?.[1];
             const phIdx = phAttrs.match(/idx="([^"]+)"/)?.[1];
             const phDef = phM ? lookupPlaceholder(phType, phIdx) : undefined;
+
+            const boxStyle = parseVisualBoxStyle(spXml);
+            const { spPrXml, txBodyXml, bodyPrXml } = boxStyle;
 
             const offM = spPrXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
             const extM = spPrXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
@@ -1290,54 +1774,27 @@ export function parsePptx(buffer: Buffer): {
               if (mediaMap[target]) shapeBlipSrc = mediaMap[target];
             }
 
-            // Shape background fill (strictly inside <p:spPr>, excluding <a:ln>)
-            let shapeBg: string | undefined;
-            const spPrWithoutLn = spPrXml.replace(/<a:ln[\s>][\s\S]*?<\/a:ln>/gi, "");
-            if (!spPrWithoutLn.includes("<a:noFill")) {
-              const sFillM =
-                spPrWithoutLn.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
-                spPrWithoutLn.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
-              if (sFillM) shapeBg = resolveColor(sFillM[0]);
-              else shapeBg = phDef?.shapeBg;
-            }
+            const shapeBg = boxStyle.hasExplicitNoFill
+              ? undefined
+              : boxStyle.shapeBg || phDef?.shapeBg;
+            const shapeBgGradient = boxStyle.hasExplicitNoFill
+              ? undefined
+              : boxStyle.shapeBgGradient ||
+                (!boxStyle.shapeBg ? phDef?.shapeBgGradient : undefined);
 
-            // Shape border / outline (<a:ln> inside <p:spPr>)
-            let borderColor: string | undefined = phDef?.borderColor;
-            let borderWidth: number | undefined = phDef?.borderWidth;
-            const lnM = spPrXml.match(/<a:ln([^>]*)>([\s\S]*?)<\/a:ln>/i);
-            if (lnM) {
-              if (lnM[2].includes("<a:noFill")) {
-                borderColor = undefined;
-                borderWidth = undefined;
-              } else {
-                const lnClr = resolveColor(lnM[2]);
-                if (lnClr) {
-                  borderColor = lnClr;
-                  const wM = lnM[1].match(/w="(\d+)"/);
-                  borderWidth = wM
-                    ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
-                    : 1;
-                }
-              }
-            }
-
-            let borderRadius: number | undefined = phDef?.borderRadius;
-            if (spPrXml.includes('prst="ellipse"')) borderRadius = 9999;
-            else if (spPrXml.includes('prst="roundRect"')) borderRadius = 12;
-
-            // Vertical alignment on text container
-            let verticalAlign: "top" | "center" | "bottom" =
-              phDef?.verticalAlign || "top";
-            const bodyPrXml =
-              txBodyXml.match(
-                /<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i
-              )?.[0] || "";
-            const anchorM = bodyPrXml.match(/anchor="([^"]+)"/);
-            if (anchorM) {
-              if (anchorM[1] === "ctr") verticalAlign = "center";
-              else if (anchorM[1] === "b") verticalAlign = "bottom";
-              else if (anchorM[1] === "t") verticalAlign = "top";
-            }
+            const hasExplicitNoLn = /<a:ln[^>]*>[\s\S]*?<a:noFill\b/i.test(spPrXml);
+            const borderColor = hasExplicitNoLn
+              ? undefined
+              : boxStyle.borderColor || phDef?.borderColor;
+            const borderWidth = hasExplicitNoLn
+              ? undefined
+              : boxStyle.borderWidth || phDef?.borderWidth;
+            const borderRadius = boxStyle.borderRadius ?? phDef?.borderRadius;
+            const verticalAlign: "top" | "center" | "bottom" =
+              boxStyle.verticalAlign || phDef?.verticalAlign || "top";
+            const shapePadding = boxStyle.padding || phDef?.padding;
+            const styleFontColor = boxStyle.styleFontColor || phDef?.styleFontColor;
+            const styleFontIdx = boxStyle.styleFontIdx || phDef?.styleFontIdx;
 
             const isTitleShape =
               phType === "title" ||
@@ -1366,7 +1823,9 @@ export function parsePptx(buffer: Buffer): {
               ? masterData.titleStyles
               : isBodyPlaceholder
                 ? masterData.bodyStyles
-                : masterData.otherStyles;
+                : Object.keys(masterData.otherStyles).length > 0
+                  ? masterData.otherStyles
+                  : presDefaultStyles;
 
             // Explicit normAutofit fontScale in <a:bodyPr>
             let autofitScale = 1;
@@ -1379,92 +1838,60 @@ export function parsePptx(buffer: Buffer): {
             }
 
             const pMatches =
-              txBodyXml.match(/<a:p[\s>][\s\S]*?<\/a:p>/gi) || [];
+              txBodyXml.match(/<a:p[\s>][\s\S]*?<\/a:p>|<a:p\s*\/>/gi) || [];
             const paragraphs: NonNullable<SlideElement["paragraphs"]> = [];
 
-            const firstExplicitSz = txBodyXml.match(/sz="(\d+)"/);
+            const firstExplicitSz = txBodyXml.match(/\bsz="(\d+)"/);
             const firstExplicitScaled = firstExplicitSz
               ? Math.max(9, Math.round((parseInt(firstExplicitSz[1], 10) / 100) * ptScale))
               : undefined;
 
+            const autoNumCounters: Record<number, number> = {};
+            let pendingSpacerPx = 0;
+
             for (const pXml of pMatches) {
-              const pPrXml =
-                pXml.match(
-                  /<a:pPr[^>]*>([\s\S]*?)<\/a:pPr>|<a:pPr[^>]*\/>/i
-                )?.[0] || "";
-              const pLvlM = pPrXml.match(/lvl="(\d+)"/);
+              const pPrMatch = pXml.match(
+                /<a:pPr([^>]*)>([\s\S]*?)<\/a:pPr>|<a:pPr([^>]*)\/>/i
+              );
+              const pPrAttr = pPrMatch ? pPrMatch[1] || pPrMatch[3] || "" : "";
+              const pPrInner = pPrMatch ? pPrMatch[2] || "" : "";
+              const pLvlM = pPrAttr.match(/\blvl="(\d+)"/);
               const lvl = pLvlM ? Math.min(8, Math.max(0, parseInt(pLvlM[1], 10))) : 0;
 
-              const shLvl = shapeLvlStyles[lvl] || shapeLvlStyles[0];
-              const phLvl = phDef?.lvlStyles?.[lvl] || phDef?.lvlStyles?.[0];
-              const msLvl = masterStyleMap[lvl] || masterStyleMap[0];
-
-              let align: "left" | "center" | "right" | "justify" =
-                shLvl?.align ||
-                phLvl?.align ||
-                msLvl?.align ||
-                (phType === "ctrTitle" ? "center" : "left");
-              if (pPrXml.includes('algn="ctr"')) align = "center";
-              else if (pPrXml.includes('algn="r"')) align = "right";
-              else if (pPrXml.includes('algn="just"')) align = "justify";
-              else if (pPrXml.includes('algn="l"')) align = "left";
-
-              const pDefRPrXml =
-                pPrXml.match(
-                  /<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>|<a:defRPr[^>]*\/>/i
-                )?.[0] || "";
-              const defClr =
-                resolveColor(pDefRPrXml) ||
-                shLvl?.color ||
-                phLvl?.color ||
-                msLvl?.color;
-              const pDefSzM = pDefRPrXml.match(/sz="(\d+)"/);
-              const pDefSize = pDefSzM
-                ? Math.max(9, Math.round((parseInt(pDefSzM[1], 10) / 100) * ptScale))
-                : undefined;
-              const pDefFontM = pDefRPrXml.match(
-                /<a:latin\s+typeface="([^"+][^"]*)"/
+              const baseDefaults = mergeLevelStyle(
+                mergeLevelStyle(
+                  presDefaultStyles[lvl] || presDefaultStyles[0],
+                  masterStyleMap[lvl] || masterStyleMap[0]
+                ),
+                mergeLevelStyle(
+                  phDef?.lvlStyles?.[lvl] || phDef?.lvlStyles?.[0],
+                  shapeLvlStyles[lvl] || shapeLvlStyles[0]
+                )
               );
-              const pDefFont =
-                pDefFontM?.[1] ||
-                shLvl?.fontFamily ||
-                phLvl?.fontFamily ||
-                msLvl?.fontFamily;
+              const pDirect = parseParagraphProps(pPrAttr, pPrInner);
+              const resolvedParaStyle = mergeLevelStyle(baseDefaults, pDirect) || {};
 
-              let hasBullet = false;
-              let bulletChar: string | undefined;
-              const pBuCharM = pPrXml.match(/<a:buChar\s+[^>]*char="([^"]*)"/i);
-              if (pPrXml.includes("<a:buNone")) {
-                hasBullet = false;
-              } else if (pBuCharM || pPrXml.includes("<a:buAutoNum")) {
-                hasBullet = true;
-                bulletChar = pBuCharM?.[1] ? decodeXmlEntities(pBuCharM[1]) : undefined;
-              } else if (shLvl?.buNone) {
-                hasBullet = false;
-              } else if (shLvl?.bullet) {
-                hasBullet = true;
-                bulletChar = shLvl.bulletChar;
-              } else if (phLvl?.buNone) {
-                hasBullet = false;
-              } else if (phLvl?.bullet) {
-                hasBullet = true;
-                bulletChar = phLvl.bulletChar;
-              } else if (isBodyPlaceholder && !msLvl?.buNone) {
-                hasBullet = Boolean(msLvl?.bullet);
-                bulletChar = msLvl?.bulletChar;
-              }
+              const align: "left" | "center" | "right" | "justify" =
+                resolvedParaStyle.align ||
+                (phType === "ctrTitle" ? "center" : "left");
 
-              const runMatches =
-                pXml.match(
-                  /<a:r[\s>][\s\S]*?<\/a:r>|<a:fld[\s>][\s\S]*?<\/a:fld>|<a:br[\s>][\s\S]*?<\/a:br>|<a:br\s*\/>/gi
-                ) || [];
-              const runs: NonNullable<SlideElement["paragraphs"]>[number]["runs"] =
-                [];
+              const defColor =
+                resolvedParaStyle.color ||
+                styleFontColor ||
+                (isTitleShape && (shapeBg || shapeBgGradient)
+                  ? "#ffffff"
+                  : isTitleShape
+                    ? defaultTitleColor
+                    : defaultBodyColor);
+
+              const themeFallbackFont =
+                styleFontIdx === "major" || isTitleShape
+                  ? themeFonts.major
+                  : themeFonts.minor;
+              const defFont = resolvedParaStyle.fontFamily || themeFallbackFont;
 
               const fallbackLvlSize =
-                shLvl?.fontSize ||
-                phLvl?.fontSize ||
-                msLvl?.fontSize ||
+                resolvedParaStyle.fontSize ||
                 firstExplicitScaled ||
                 (isTitleShape
                   ? defaultTitleSize
@@ -1473,6 +1900,49 @@ export function parsePptx(buffer: Buffer): {
                     : isSlideNum
                       ? Math.round(11 * ptScale)
                       : Math.round(18 * ptScale));
+
+              // Resolve bullets vs auto-numbering cascade cleanly per paragraph
+              let hasBullet = false;
+              let isNumbered = false;
+              let bulletChar: string | undefined;
+
+              const clearDeeperCounters = (curLvl: number) => {
+                for (let k = curLvl + 1; k <= 8; k++) {
+                  delete autoNumCounters[k];
+                }
+              };
+
+              const resolveBulletFromLevel = (src?: LevelStyleDefaults): "none" | "char" | "autonum" | "unset" => {
+                if (!src) return "unset";
+                if (src.buNone) return "none";
+                if (src.autoNumType) return "autonum";
+                if (src.bullet) return "char";
+                return "unset";
+              };
+
+              const bSources = [
+                pDirect,
+                shapeLvlStyles[lvl] || shapeLvlStyles[0],
+                phDef?.lvlStyles?.[lvl] || phDef?.lvlStyles?.[0],
+                isBodyPlaceholder || !phM ? masterStyleMap[lvl] || masterStyleMap[0] : undefined,
+              ];
+
+              let winnerMode: "none" | "char" | "autonum" | "unset" = "unset";
+              let winnerSrc: LevelStyleDefaults | undefined;
+              for (const src of bSources) {
+                const mode = resolveBulletFromLevel(src);
+                if (mode !== "unset") {
+                  winnerMode = mode;
+                  winnerSrc = src;
+                  break;
+                }
+              }
+
+              const runMatches =
+                pXml.match(
+                  /<a:r[\s>][\s\S]*?<\/a:r>|<a:fld[\s>][\s\S]*?<\/a:fld>|<a:br[\s>][\s\S]*?<\/a:br>|<a:br\s*\/>/gi
+                ) || [];
+              const runs: NonNullable<SlideElement["paragraphs"]>[number]["runs"] = [];
 
               for (const rXml of runMatches) {
                 if (/^<a:br[\s/>]/i.test(rXml)) {
@@ -1489,33 +1959,32 @@ export function parsePptx(buffer: Buffer): {
                   rXml.match(
                     /<a:rPr[^>]*>([\s\S]*?)<\/a:rPr>|<a:rPr[^>]*\/>/i
                   )?.[0] || "";
+                const rFlags = parseRunFlags(rPrXml);
 
-                const bold = rPrXml.includes('b="1"');
-                const italic = rPrXml.includes('i="1"');
-                const underline = rPrXml.includes('u="sng"');
+                const bold = rFlags.bold ?? resolvedParaStyle.bold ?? false;
+                const italic = rFlags.italic ?? resolvedParaStyle.italic ?? false;
+                const underline = rFlags.underline ?? resolvedParaStyle.underline ?? false;
+                const strikethrough =
+                  rFlags.strikethrough ?? resolvedParaStyle.strikethrough ?? false;
+                const uppercase =
+                  rFlags.uppercase ?? resolvedParaStyle.uppercase ?? false;
 
-                const color =
-                  resolveColor(rPrXml) ||
-                  defClr ||
-                  (isTitleShape && shapeBg
-                    ? "#ffffff"
-                    : isTitleShape
-                      ? defaultTitleColor
-                      : defaultBodyColor);
+                const color = resolveColor(rPrXml) || defColor;
 
-                const szM = rPrXml.match(/sz="(\d+)"/);
+                const szM = rPrXml.match(/\bsz="(\d+)"/);
                 const rawSize = szM
                   ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
-                  : pDefSize || fallbackLvlSize;
+                  : fallbackLvlSize;
 
-                const fontM = rPrXml.match(/<a:latin\s+typeface="([^"+][^"]*)"/);
-                const fontFamily = fontM ? fontM[1] : pDefFont;
+                const fontFamily = parseRunFontFamily(rPrXml) || defFont;
 
                 runs.push({
                   text,
                   bold,
                   italic,
                   underline,
+                  strikethrough,
+                  uppercase,
                   color,
                   size: rawSize,
                   fontFamily,
@@ -1524,14 +1993,89 @@ export function parsePptx(buffer: Buffer): {
 
               const visibleParaText = runs.map((r) => r.text).join("").trim();
               if (runs.length > 0 && visibleParaText.length > 0) {
+                clearDeeperCounters(lvl);
+                if (winnerMode === "autonum") {
+                  hasBullet = true;
+                  isNumbered = true;
+                  const nextNum =
+                    autoNumCounters[lvl] !== undefined
+                      ? autoNumCounters[lvl] + 1
+                      : winnerSrc?.autoNumStartAt ?? 1;
+                  autoNumCounters[lvl] = nextNum;
+                  bulletChar = formatAutoNumber(nextNum, winnerSrc?.autoNumType);
+                } else if (winnerMode === "char") {
+                  delete autoNumCounters[lvl];
+                  hasBullet = true;
+                  bulletChar =
+                    winnerSrc?.bulletChar ||
+                    resolvedParaStyle.bulletChar ||
+                    "•";
+                } else {
+                  delete autoNumCounters[lvl];
+                }
+
+                const effMarL = resolvedParaStyle.marL;
+                const effIndent = resolvedParaStyle.indent;
+                const computedIndentLeft =
+                  effMarL !== undefined
+                    ? Math.min(
+                        160,
+                        Math.max(
+                          0,
+                          effIndent !== undefined && effIndent < 0
+                            ? effMarL + effIndent
+                            : effMarL
+                        )
+                      )
+                    : lvl > 0
+                      ? Math.min(6, lvl) * 16
+                      : 0;
+
+                const firstSize =
+                  runs.find((r) => typeof r.size === "number")?.size || fallbackLvlSize;
+                const bulletSize = resolvedParaStyle.bulletSizePct
+                  ? Math.max(
+                      10,
+                      Math.round((firstSize * resolvedParaStyle.bulletSizePct) / 100)
+                    )
+                  : undefined;
+
+                const spaceBefore =
+                  (resolvedParaStyle.spcBef || 0) + pendingSpacerPx;
+                pendingSpacerPx = 0;
+
                 paragraphs.push({
                   align,
                   bullet: hasBullet,
                   bulletChar,
+                  bulletColor: resolvedParaStyle.bulletColor,
+                  bulletSize,
+                  isNumbered,
                   level: lvl,
+                  indentLeft: computedIndentLeft,
+                  spaceBefore: spaceBefore > 0 ? spaceBefore : undefined,
+                  spaceAfter: resolvedParaStyle.spcAft,
+                  lineHeight: resolvedParaStyle.lnSpcPct
+                    ? Number(((resolvedParaStyle.lnSpcPct / 100) * 1.15).toFixed(2))
+                    : undefined,
                   runs,
                 });
-                contentParagraphs.push(visibleParaText);
+                const outlinePrefix =
+                  hasBullet && bulletChar
+                    ? `${bulletChar} `
+                    : hasBullet
+                      ? "• "
+                      : "";
+                contentParagraphs.push(`${outlinePrefix}${visibleParaText}`);
+              } else {
+                // Empty spacer paragraph: preserve vertical rhythm without emitting an empty bullet
+                delete autoNumCounters[lvl];
+                if (paragraphs.length > 0) {
+                  pendingSpacerPx = Math.min(
+                    22,
+                    pendingSpacerPx + Math.max(6, Math.round(fallbackLvlSize * 0.45))
+                  );
+                }
               }
             }
 
@@ -1551,7 +2095,11 @@ export function parsePptx(buffer: Buffer): {
               continue;
             }
 
-            if (paragraphs.length > 0 || (shapeBg && effCx > 0 && effCy > 0) || borderColor) {
+            if (
+              paragraphs.length > 0 ||
+              ((shapeBg || shapeBgGradient) && effCx > 0 && effCy > 0) ||
+              borderColor
+            ) {
               const rawShapeText = paragraphs
                 .map((p) => p.runs.map((r) => r.text).join(""))
                 .join("\n");
@@ -1565,7 +2113,7 @@ export function parsePptx(buffer: Buffer): {
                     ? { leftPct: 82, topPct: 91, widthPct: 14, heightPct: 6 }
                     : { leftPct: 6, topPct: 25, widthPct: 88, heightPct: 66 };
 
-              const hasBoxStyling = Boolean(shapeBg || borderColor);
+              const hasBoxStyling = Boolean(shapeBg || shapeBgGradient || borderColor);
               const elementIndex = elements.length;
               elements.push({
                 id: `sp_${elementIndex}`,
@@ -1577,9 +2125,11 @@ export function parsePptx(buffer: Buffer): {
                 height: `${box.heightPct.toFixed(2)}%`,
                 zIndex: zIdx,
                 bgColor: shapeBg,
+                bgGradient: shapeBgGradient,
                 borderColor,
                 borderWidth,
                 borderRadius,
+                padding: shapePadding,
                 verticalAlign,
                 paragraphs,
                 rawText: rawShapeText,
@@ -1664,7 +2214,9 @@ export function parsePptx(buffer: Buffer): {
             const maxRunSize = Math.max(9, rawMaxSize * scaleFactor);
             const hasBold = p.runs.some((r) => r.bold);
             const charWidthFactor = hasBold ? 0.61 : 0.56;
-            const indentPx = (p.level || 0) * 14 + (p.bullet ? 20 : 0);
+            const indentPx =
+              (p.indentLeft !== undefined ? p.indentLeft : (p.level || 0) * 14) +
+              (p.bullet ? 22 : 0);
             const usableWidth = Math.max(24, boxWidthPx - indentPx);
             const charsPerLine = Math.max(
               6,
@@ -1676,7 +2228,9 @@ export function parsePptx(buffer: Buffer): {
               const len = lineStr.trim().length || 1;
               paraLines += Math.max(1, Math.ceil(len / charsPerLine));
             }
-            h += paraLines * (maxRunSize * 1.2) + 4;
+            const lhFactor = p.lineHeight || 1.2;
+            const extraSpc = (p.spaceBefore || 0) + (p.spaceAfter || 0);
+            h += paraLines * (maxRunSize * lhFactor) + extraSpc + 3;
           }
           return h;
         };
@@ -1714,6 +2268,7 @@ export function parsePptx(buffer: Buffer): {
         content: contentParagraphs,
         rawText: rawSlideText,
         bgColor,
+        bgGradient,
         bgImage,
         aspectRatio,
         elements,
@@ -1807,7 +2362,7 @@ export async function parseDocument(
   fileUrl: string,
   fileName?: string
 ): Promise<ParsedDocument> {
-  const cacheKey = `v5:${fileUrl}:${fileName || ""}`;
+  const cacheKey = `v6:${fileUrl}:${fileName || ""}`;
   if (documentCache.has(cacheKey)) {
     return documentCache.get(cacheKey)!;
   }

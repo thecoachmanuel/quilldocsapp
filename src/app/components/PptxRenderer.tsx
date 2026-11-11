@@ -88,7 +88,33 @@ export default function PptxRenderer({
     height: fullscreenContainerHeight,
     ref: fullscreenContainerRef,
   } = useResizeDetector();
+  const viewerRootRef = useRef<HTMLDivElement>(null);
   const pendingJumpSlideRef = useRef<number | null>(null);
+  const [isJumpHighlight, setIsJumpHighlight] = useState<boolean>(false);
+
+  const navigateToSlideFromChat = (
+    targetPage: number,
+    slideList: RichSlide[]
+  ) => {
+    const matchingSlide =
+      slideList.find((s) => s.slideNumber === targetPage) ||
+      slideList[Math.min(Math.max(1, targetPage), slideList.length) - 1];
+    const targetSlide = matchingSlide
+      ? matchingSlide.slideNumber
+      : Math.min(Math.max(1, targetPage), slideList.length);
+    pendingJumpSlideRef.current = null;
+    clearPendingPageJump(fileId);
+    setViewMode("visual");
+    setCurrSlide(targetSlide);
+    setIsJumpHighlight(true);
+    setTimeout(() => setIsJumpHighlight(false), 1400);
+    requestAnimationFrame(() => {
+      viewerRootRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+  };
 
   // Listen for citation jump events from Quill AI Assistant chat
   useEffect(() => {
@@ -98,21 +124,14 @@ export default function PptxRenderer({
       if (detail.fileId && detail.fileId !== fileId) return;
 
       if (!isLoading && slides.length > 0) {
-        const matchingSlide =
-          slides.find((s) => s.slideNumber === detail.page) ||
-          slides[Math.min(Math.max(1, detail.page), slides.length) - 1];
-        const targetSlide = matchingSlide
-          ? matchingSlide.slideNumber
-          : Math.min(Math.max(1, detail.page), slides.length);
-        pendingJumpSlideRef.current = null;
-        clearPendingPageJump(fileId);
-        setCurrSlide(targetSlide);
+        navigateToSlideFromChat(detail.page, slides);
       } else {
         pendingJumpSlideRef.current = detail.page;
       }
     };
     window.addEventListener("quill:jump-to-page", handleJump);
     return () => window.removeEventListener("quill:jump-to-page", handleJump);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, slides, fileId]);
 
   // Apply deferred or cross-document persisted citation jump once presentation slides finish parsing
@@ -123,16 +142,10 @@ export default function PptxRenderer({
         consumePendingPageJump(fileId)?.page ??
         null;
       if (pendingPage !== null) {
-        const matchingSlide =
-          slides.find((s) => s.slideNumber === pendingPage) ||
-          slides[Math.min(Math.max(1, pendingPage), slides.length) - 1];
-        const targetSlide = matchingSlide
-          ? matchingSlide.slideNumber
-          : Math.min(Math.max(1, pendingPage), slides.length);
-        pendingJumpSlideRef.current = null;
-        setCurrSlide(targetSlide);
+        navigateToSlideFromChat(pendingPage, slides);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, slides, fileId]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
@@ -273,6 +286,7 @@ export default function PptxRenderer({
               : Math.min(Math.max(1, pendingPage), parsedSlides.length);
             pendingJumpSlideRef.current = null;
             clearPendingPageJump(fileId);
+            setViewMode("visual");
           }
           setSlides(parsedSlides);
           setCurrSlide(initialSlide);
@@ -306,6 +320,7 @@ export default function PptxRenderer({
   }, [fileId, url, fileName]);
 
   const activeSlide: RichSlide =
+    slides.find((s) => s.slideNumber === currSlide) ||
     slides[currSlide - 1] ||
     slides[0] || {
       slideNumber: 1,
@@ -409,12 +424,17 @@ export default function PptxRenderer({
               transformOrigin: "top left",
               backgroundColor: activeSlide.bgColor || "#ffffff",
               backgroundImage: activeSlide.bgImage
-                ? `url(${activeSlide.bgImage})`
-                : undefined,
+                ? activeSlide.bgGradient
+                  ? `url(${activeSlide.bgImage}), ${activeSlide.bgGradient}`
+                  : `url(${activeSlide.bgImage})`
+                : activeSlide.bgGradient || undefined,
               backgroundSize: "cover",
               backgroundPosition: "center",
             }}
-            className="absolute top-0 left-0 shadow-xl rounded-lg sm:rounded-xl border border-zinc-200 overflow-hidden"
+            className={cn(
+              "absolute top-0 left-0 shadow-xl rounded-lg sm:rounded-xl border border-zinc-200 overflow-hidden transition-shadow duration-300",
+              isJumpHighlight && "ring-4 ring-blue-500/80 ring-offset-2"
+            )}
           >
             {/* Render positioned elements */}
             {hasElements ? (
@@ -485,7 +505,9 @@ export default function PptxRenderer({
                 }
 
                 // C. Shape / Text Box Element
-                const hasBoxStyling = Boolean(el.bgColor || el.borderColor);
+                const hasBoxStyling = Boolean(
+                  el.bgColor || el.bgGradient || el.borderColor
+                );
                 return (
                   <div
                     key={el.id}
@@ -504,6 +526,7 @@ export default function PptxRenderer({
                             ? "flex-end"
                             : "flex-start",
                       backgroundColor: el.bgColor || "transparent",
+                      backgroundImage: el.bgGradient || undefined,
                       borderColor: el.borderColor || "transparent",
                       borderWidth: el.borderWidth
                         ? `${el.borderWidth}px`
@@ -512,7 +535,7 @@ export default function PptxRenderer({
                       borderRadius: el.borderRadius
                         ? `${el.borderRadius}px`
                         : undefined,
-                      padding: hasBoxStyling ? "3px 8px" : "1px 3px",
+                      padding: el.padding || (hasBoxStyling ? "4px 8px" : "2px 4px"),
                       boxSizing: "border-box",
                       zIndex: el.zIndex,
                     }}
@@ -523,28 +546,58 @@ export default function PptxRenderer({
                           para.runs.find((r) => typeof r.size === "number")
                             ?.size || 18;
                         const indentPx =
-                          para.level && para.level > 0
-                            ? Math.min(para.level, 6) * 14
-                            : 0;
+                          para.indentLeft !== undefined
+                            ? para.indentLeft
+                            : para.level && para.level > 0
+                              ? Math.min(para.level, 6) * 16
+                              : 0;
                         const bulletText = para.bulletChar || "•";
-                        const bulletColor = para.runs[0]?.color || "#27272a";
+                        const bulletColor =
+                          para.bulletColor || para.runs[0]?.color || "#27272a";
+                        const bulletSize =
+                          para.bulletSize ||
+                          (para.isNumbered
+                            ? firstRunSize
+                            : Math.max(10, Math.round(firstRunSize * 0.88)));
+                        const paraLH = para.lineHeight || 1.18;
+                        const isCenteredOrRight =
+                          para.align === "center" || para.align === "right";
                         return (
                           <div
                             key={pIdx}
                             style={{
                               textAlign: para.align || "left",
                               paddingLeft: indentPx ? `${indentPx}px` : undefined,
+                              marginTop:
+                                para.spaceBefore !== undefined
+                                  ? `${para.spaceBefore}px`
+                                  : "1px",
+                              marginBottom:
+                                para.spaceAfter !== undefined
+                                  ? `${para.spaceAfter}px`
+                                  : "2px",
+                              justifyContent:
+                                para.align === "center"
+                                  ? "center"
+                                  : para.align === "right"
+                                    ? "flex-end"
+                                    : "flex-start",
                             }}
-                            className="flex items-start gap-1.5 my-[1px]"
+                            className="flex items-start gap-1.5"
                           >
                             {para.bullet && (
                               <span
                                 style={{
-                                  fontSize: `${Math.max(10, Math.round(firstRunSize * 0.85))}px`,
-                                  lineHeight: 1.18,
+                                  fontSize: `${bulletSize}px`,
+                                  lineHeight: paraLH,
                                   color: bulletColor,
                                 }}
-                                className="font-bold shrink-0 select-none"
+                                className={cn(
+                                  "shrink-0 select-none",
+                                  para.isNumbered
+                                    ? "font-semibold tabular-nums min-w-[1.25em]"
+                                    : "font-bold"
+                                )}
                               >
                                 {bulletText}
                               </span>
@@ -552,10 +605,10 @@ export default function PptxRenderer({
                             <p
                               style={{
                                 textAlign: para.align || "left",
-                                width: "100%",
+                                width: isCenteredOrRight ? "auto" : "100%",
                                 margin: 0,
                                 fontSize: `${firstRunSize}px`,
-                                lineHeight: 1.18,
+                                lineHeight: paraLH,
                                 whiteSpace: "pre-wrap",
                                 overflowWrap: "break-word",
                               }}
@@ -571,6 +624,13 @@ export default function PptxRenderer({
                                     ? `"${run.fontFamily}", Georgia, serif`
                                     : `"${run.fontFamily}", "Inter", ui-sans-serif, system-ui, sans-serif`
                                   : '"Inter", ui-sans-serif, system-ui, sans-serif';
+                                const decoration =
+                                  [
+                                    run.underline ? "underline" : "",
+                                    run.strikethrough ? "line-through" : "",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ") || "none";
                                 return (
                                   <span
                                     key={rIdx}
@@ -579,15 +639,16 @@ export default function PptxRenderer({
                                       fontStyle: run.italic
                                         ? "italic"
                                         : "normal",
-                                      textDecoration: run.underline
-                                        ? "underline"
-                                        : "none",
+                                      textDecoration: decoration,
+                                      textTransform: run.uppercase
+                                        ? "uppercase"
+                                        : undefined,
                                       color: run.color || "#000000",
                                       fontSize: run.size
                                         ? `${run.size}px`
                                         : "18px",
                                       fontFamily: resolvedFontFamily,
-                                      lineHeight: 1.18,
+                                      lineHeight: paraLH,
                                     }}
                                   >
                                     {highlightMatch(run.text, searchQuery)}
@@ -661,14 +722,21 @@ export default function PptxRenderer({
 
       <div className="space-y-4">
         {activeSlide.content && activeSlide.content.length > 0 ? (
-          activeSlide.content.map((paragraph, idx) => (
-            <div key={idx} className="flex items-start gap-3">
-              <ChevronRight className="h-5 w-5 text-orange-500 shrink-0 mt-0.5" />
-              <p className="text-base text-zinc-800 leading-relaxed">
-                {highlightMatch(paragraph, searchQuery)}
-              </p>
-            </div>
-          ))
+          activeSlide.content.map((paragraph, idx) => {
+            const hasExplicitMarker = /^(?:\d+[\.\)]|[a-zA-Z][\.\)]|\([a-zA-Z0-9]+\)|[•▪▫❑◆❖➢➔→✓☑\-])\s+/.test(
+              paragraph
+            );
+            return (
+              <div key={idx} className="flex items-start gap-3">
+                {!hasExplicitMarker && (
+                  <ChevronRight className="h-5 w-5 text-orange-500 shrink-0 mt-0.5" />
+                )}
+                <p className="text-base text-zinc-800 leading-relaxed">
+                  {highlightMatch(paragraph, searchQuery)}
+                </p>
+              </div>
+            );
+          })
         ) : (
           <p className="text-zinc-500 italic">No text content on this slide.</p>
         )}
@@ -677,7 +745,10 @@ export default function PptxRenderer({
   );
 
   return (
-    <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
+    <div
+      ref={viewerRootRef}
+      className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden"
+    >
       {/* Top Toolbar matching Quill app design */}
       <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 shrink-0">

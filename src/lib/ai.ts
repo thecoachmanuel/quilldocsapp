@@ -48,13 +48,16 @@ const docTextCache = new Map<string, string>();
 /**
  * Extract clean text from a document (PDF, Word DOCX, or PowerPoint PPTX)
  */
-export async function extractPdfText(fileUrl: string): Promise<string> {
+export async function extractPdfText(
+  fileUrl: string,
+  fileName?: string
+): Promise<string> {
   if (docTextCache.has(fileUrl)) {
     return docTextCache.get(fileUrl)!;
   }
 
   try {
-    const parsed = await parseDocument(fileUrl);
+    const parsed = await parseDocument(fileUrl, fileName);
     const text = parsed.text || "";
 
     if (text) {
@@ -207,7 +210,7 @@ export async function buildStructuredDocumentContext({
   unitLabel: "Page" | "Slide";
 }> {
   try {
-    const parsed = await parseDocument(fileUrl);
+    const parsed = await parseDocument(fileUrl, fileName);
     const unitLabel: "Page" | "Slide" = parsed.fileType === "pptx" ? "Slide" : "Page";
     const totalPages =
       parsed.totalPages ||
@@ -219,8 +222,8 @@ export async function buildStructuredDocumentContext({
       isMultiDoc && docIndex
         ? `[${docIndex} · ${unit === "Slide" ? "s" : "p"}.${num}]`
         : isMultiDoc
-        ? `[Source: ${fileName} • ${unit} ${num}]`
-        : `[${unit} ${num}]`;
+          ? `[Source: ${fileName} • ${unit} ${num}]`
+          : `[${unit} ${num}]`;
 
     const segments: StructuredSegment[] = [];
     let orderCounter = 0;

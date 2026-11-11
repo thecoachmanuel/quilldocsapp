@@ -29,13 +29,15 @@ function Messages({
   } = useContext(ChatContext);
   const effectiveExpanded = isExpanded || contextExpanded || false;
   const effectiveDocSources: DocSourceRef[] =
-    docSources && docSources.length > 0
+    docSources && docSources.length > 1
       ? docSources
       : autoMultiDocs && autoMultiDocs.ids.length > 0
       ? autoMultiDocs.ids.map((id, idx) => ({
           id,
           name: autoMultiDocs.names[idx] || `Document ${idx + 1}`,
         }))
+      : docSources && docSources.length > 0
+      ? docSources
       : (docNames || []).map((name) => ({ name }));
 
   const { data, isLoading, fetchNextPage } =

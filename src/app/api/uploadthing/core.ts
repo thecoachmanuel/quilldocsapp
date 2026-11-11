@@ -75,7 +75,7 @@ const onUploadComplete = async ({
   });
 
   try {
-    const parsed = await parseDocument(fileUrl);
+    const parsed = await parseDocument(fileUrl, file.name);
     const pagesAmt = parsed.totalSlides || Math.max(1, Math.ceil(parsed.totalWords / 400));
     const { subscriptionPlan } = metadata;
 

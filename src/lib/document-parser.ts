@@ -18,6 +18,8 @@ export interface SlideElement {
   paragraphs?: Array<{
     align?: "left" | "center" | "right" | "justify";
     bullet?: boolean;
+    bulletChar?: string;
+    level?: number;
     runs: Array<{
       text: string;
       bold?: boolean;
@@ -216,9 +218,224 @@ function adjustColor(hex: string, lumMod?: number, lumOff?: number): string {
   return ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
+interface SpTreeToken {
+  tag: "grpSp" | "pic" | "graphicFrame" | "sp";
+  innerXml: string;
+}
+
+interface LevelStyleDefaults {
+  fontSize?: number;
+  color?: string;
+  align?: "left" | "center" | "right" | "justify";
+  fontFamily?: string;
+  bullet?: boolean;
+  buNone?: boolean;
+  bulletChar?: string;
+}
+
+interface PlaceholderLayoutDef {
+  type?: string;
+  idx?: string;
+  x?: number;
+  y?: number;
+  cx?: number;
+  cy?: number;
+  shapeBg?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderRadius?: number;
+  verticalAlign?: "top" | "center" | "bottom";
+  lvlStyles?: Record<number, LevelStyleDefaults>;
+}
+
+/**
+ * Strips `<mc:Fallback>` blocks when `<mc:Choice>` exists so AlternateContent
+ * shapes/diagrams are not rendered twice on top of each other.
+ */
+function stripAlternateFallback(xml: string): string {
+  return xml.replace(
+    /<mc:AlternateContent[^>]*>([\s\S]*?)<\/mc:AlternateContent>/gi,
+    (full, inner) =>
+      /<mc:Choice[\s>]/i.test(inner)
+        ? inner.replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>/gi, "")
+        : full
+  );
+}
+
+/**
+ * Extracts direct `<p:grpSp>`, `<p:pic>`, `<p:graphicFrame>`, and `<p:sp>` nodes
+ * with balanced tag matching so nested `<p:grpSp>` blocks never split mid-tag.
+ */
+function extractTopLevelSpTreeTokens(treeXml: string): SpTreeToken[] {
+  const tokens: SpTreeToken[] = [];
+  const openTagRegex = /<(p:grpSp|p:pic|p:graphicFrame|p:sp)(?=[\s>])/g;
+  let cursor = 0;
+
+  while (cursor < treeXml.length) {
+    openTagRegex.lastIndex = cursor;
+    const match = openTagRegex.exec(treeXml);
+    if (!match) break;
+
+    const fullTag = match[1];
+    const shortTag = fullTag.replace(/^p:/, "") as SpTreeToken["tag"];
+    const tagStart = match.index;
+    const gtIdx = treeXml.indexOf(">", tagStart + fullTag.length);
+    if (gtIdx === -1) break;
+
+    // Self-closing tag (e.g. `<p:sp .../>`)
+    if (treeXml[gtIdx - 1] === "/") {
+      cursor = gtIdx + 1;
+      continue;
+    }
+
+    const innerStart = gtIdx + 1;
+    let depth = 1;
+    let scanPos = innerStart;
+    const depthRegex = new RegExp(
+      `<(/?)${fullTag}(?=[\\s>/])[^>]*>`,
+      "g"
+    );
+
+    let closeStart = -1;
+    let nextCursor = treeXml.length;
+    depthRegex.lastIndex = innerStart;
+
+    let dMatch: RegExpExecArray | null;
+    while ((dMatch = depthRegex.exec(treeXml)) !== null) {
+      const tokenStr = dMatch[0];
+      const isClosing = dMatch[1] === "/";
+      const isSelfClosing = !isClosing && tokenStr.endsWith("/>");
+      if (isSelfClosing) continue;
+      if (isClosing) {
+        depth -= 1;
+        if (depth === 0) {
+          closeStart = dMatch.index;
+          nextCursor = dMatch.index + tokenStr.length;
+          break;
+        }
+      } else {
+        depth += 1;
+      }
+      scanPos = dMatch.index + tokenStr.length;
+      depthRegex.lastIndex = scanPos;
+    }
+
+    if (closeStart !== -1) {
+      tokens.push({
+        tag: shortTag,
+        innerXml: treeXml.slice(innerStart, closeStart),
+      });
+      cursor = nextCursor;
+    } else {
+      cursor = innerStart;
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * Resolves a ZIP-relative target path like `../slideLayouts/slideLayout1.xml`
+ * against a base entry directory (e.g. `ppt/slides`).
+ */
+function resolveZipTarget(baseDir: string, rawTarget: string): string {
+  if (!rawTarget) return "";
+  if (rawTarget.startsWith("/")) return rawTarget.slice(1);
+  const parts = baseDir ? baseDir.split("/").filter(Boolean) : [];
+  for (const seg of rawTarget.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      parts.pop();
+    } else {
+      parts.push(seg);
+    }
+  }
+  return parts.join("/");
+}
+
+/**
+ * Parses `.rels` XML into an `id -> { type, target }` map regardless of attribute order.
+ */
+function parseRelationshipsXml(
+  relsXml: string,
+  baseDir: string
+): Record<string, { type: string; target: string }> {
+  const map: Record<string, { type: string; target: string }> = {};
+  for (const rm of Array.from(
+    relsXml.matchAll(/<Relationship\s+([^>]+?)\/?\s*>/g)
+  )) {
+    const attrs = rm[1];
+    const idM = attrs.match(/Id="([^"]+)"/);
+    const typeM = attrs.match(/Type="([^"]+)"/);
+    const targetM = attrs.match(/Target="([^"]+)"/);
+    if (idM && targetM) {
+      map[idM[1]] = {
+        type: typeM ? typeM[1] : "",
+        target: resolveZipTarget(baseDir, targetM[1]),
+      };
+    }
+  }
+  return map;
+}
+
+/**
+ * Fallback extractor for legacy binary `.ppt` (OLE2 compound file) buffers.
+ */
+function extractLegacyPptSlides(buffer: Buffer): {
+  text: string;
+  slides: RichSlide[];
+  aspectRatio: number;
+} {
+  const cleanRuns: string[] = [];
+  const utf16 = buffer.toString("utf16le");
+  const utf16Matches = utf16.match(/[\x20-\x7E\u00A0-\u024F]{5,}/g) || [];
+  const noiseRegex =
+    /^(PowerPoint|Microsoft|Times New Roman|Arial|Calibri|Tahoma|Verdana|Symbol|Wingdings|Root Entry|SummaryInformation|Current User|Pictures|Document|Slide\d*|_x\d+|[\W_]+)$/i;
+
+  for (const m of utf16Matches) {
+    const trimmed = m.replace(/\s+/g, " ").trim();
+    if (trimmed.length >= 6 && /[a-zA-Z]{2,}/.test(trimmed) && !noiseRegex.test(trimmed)) {
+      if (!cleanRuns.includes(trimmed)) cleanRuns.push(trimmed);
+    }
+  }
+
+  if (cleanRuns.length < 3) {
+    const latin = buffer.toString("latin1");
+    const asciiMatches = latin.match(/[\x20-\x7E]{6,}/g) || [];
+    for (const m of asciiMatches) {
+      const trimmed = m.replace(/\s+/g, " ").trim();
+      if (trimmed.length >= 6 && /[a-zA-Z]{3,}/.test(trimmed) && !noiseRegex.test(trimmed)) {
+        if (!cleanRuns.includes(trimmed)) cleanRuns.push(trimmed);
+      }
+    }
+  }
+
+  const lines = cleanRuns.length > 0 ? cleanRuns : ["Legacy .ppt presentation loaded."];
+  const linesPerSlide = 8;
+  const slides: RichSlide[] = [];
+  for (let i = 0; i < lines.length; i += linesPerSlide) {
+    const chunk = lines.slice(i, i + linesPerSlide);
+    const slideNumber = slides.length + 1;
+    slides.push({
+      slideNumber,
+      title: chunk[0] || `Slide ${slideNumber}`,
+      content: chunk,
+      rawText: chunk.join("\n"),
+      aspectRatio: 16 / 9,
+      elements: [],
+    });
+  }
+
+  return {
+    text: slides.map((s) => `--- Slide ${s.slideNumber}: ${s.title} ---\n${s.rawText}`).join("\n\n"),
+    slides,
+    aspectRatio: 16 / 9,
+  };
+}
+
 /**
  * Parse a PPTX file buffer with high visual and structural fidelity
- * Extracts slide dimensions, positions, background colors, embedded images, tables, typography, and theme styling
+ * Extracts slide order, master/layout inheritance, positions, backgrounds, images, tables, typography, and anti-overlap autofit
  */
 export function parsePptx(buffer: Buffer): {
   text: string;
@@ -226,24 +443,37 @@ export function parsePptx(buffer: Buffer): {
   aspectRatio: number;
 } {
   try {
+    // Handle legacy non-ZIP binary `.ppt` gracefully
+    const isZip =
+      buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+    if (!isZip) {
+      return extractLegacyPptSlides(buffer);
+    }
+
     const zip = new AdmZip(buffer);
     const zipEntries = zip.getEntries();
 
-    // 1. Determine presentation dimensions & aspect ratio
+    // 1. Determine presentation dimensions, aspect ratio, and true slide order
     let sldWidth = 12192000;
     let sldHeight = 6858000;
+    let presXml = "";
     try {
-      const presXml = zip.readAsText("ppt/presentation.xml");
+      presXml = zip.readAsText("ppt/presentation.xml") || "";
       const sizeMatch = presXml.match(/<p:sldSz\s+cx="(\d+)"\s+cy="(\d+)"/);
       if (sizeMatch) {
         sldWidth = parseInt(sizeMatch[1], 10) || 12192000;
         sldHeight = parseInt(sizeMatch[2], 10) || 6858000;
       }
-    } catch (e) {
+    } catch {
       // default 16:9
     }
 
     const aspectRatio = sldWidth / sldHeight;
+    // Scale OOXML point sizes into our virtual 960px slide width (default 960pt = 12192000 EMU => 1.0)
+    const sldWidthPt = sldWidth / 12700;
+    const ptScale =
+      sldWidthPt > 0 ? Math.min(1.35, Math.max(0.45, 960 / sldWidthPt)) : 1;
+    const baseHeight = Math.max(400, Math.round(960 / aspectRatio));
 
     // 2. Extract theme colors from ppt/theme/theme*.xml
     const themeColors: Record<string, string> = {
@@ -282,14 +512,13 @@ export function parsePptx(buffer: Buffer): {
           }
         }
       }
-    } catch (e) {}
+    } catch {}
 
     themeColors.bg1 = themeColors.lt1 || "ffffff";
     themeColors.tx1 = themeColors.dk1 || "000000";
     themeColors.bg2 = themeColors.lt2 || "f3f4f6";
     themeColors.tx2 = themeColors.dk2 || "1f2937";
 
-    // Helper to resolve solid fill / text colors
     const resolveColor = (xmlChunk?: string): string | undefined => {
       if (!xmlChunk) return undefined;
       const srgb = xmlChunk.match(/<a:srgbClr\s+val="([0-9a-fA-F]{6})"/i);
@@ -313,56 +542,217 @@ export function parsePptx(buffer: Buffer): {
       return undefined;
     };
 
-    // 2.5 Extract Slide Master default styles (titleStyle & bodyStyle)
-    let masterTitleFontSize = 36;
-    let masterTitleColor = `#${themeColors.tx1}`;
-    let masterBodyFontSize = 24;
-    let masterBodyColor = `#${themeColors.tx1}`;
-    let masterBodyHasBullet = false;
+    const parseLevelStyles = (
+      styleContainerXml?: string
+    ): Record<number, LevelStyleDefaults> => {
+      const levels: Record<number, LevelStyleDefaults> = {};
+      if (!styleContainerXml) return levels;
 
-    try {
-      const masterEntry = zipEntries.find((e) =>
-        /^ppt\/slideMasters\/slideMaster1\.xml$/i.test(e.entryName)
-      );
-      if (masterEntry) {
-        const mXml = masterEntry.getData().toString("utf8");
-        const titleStyleM = mXml.match(
-          /<p:titleStyle>([\s\S]*?)<\/p:titleStyle>/i
+      for (let lvlIdx = 0; lvlIdx <= 8; lvlIdx++) {
+        const tagNum = lvlIdx + 1;
+        const lvlM = styleContainerXml.match(
+          new RegExp(
+            `<a:lvl${tagNum}pPr([^>]*)>([\\s\\S]*?)<\\/a:lvl${tagNum}pPr>|<a:lvl${tagNum}pPr([^>]*?)\\/>`,
+            "i"
+          )
         );
-        if (titleStyleM) {
-          const lvl1 = titleStyleM[1].match(
-            /<a:lvl1pPr[^>]*>([\s\S]*?)<\/a:lvl1pPr>/i
-          );
-          const chunk = lvl1 ? lvl1[1] : titleStyleM[1];
-          const szM = chunk.match(/<a:defRPr[^>]*sz="(\d+)"/i);
-          if (szM) masterTitleFontSize = Math.round(parseInt(szM[1], 10) / 100);
-          const clr = resolveColor(chunk);
-          if (clr) masterTitleColor = clr;
-        }
+        if (!lvlM) continue;
+        const pPrAttr = lvlM[1] || lvlM[3] || "";
+        const pPrInner = lvlM[2] || "";
+        const combined = `<a:lvlpPr ${pPrAttr}>${pPrInner}</a:lvlpPr>`;
 
-        const bodyStyleM = mXml.match(
-          /<p:bodyStyle>([\s\S]*?)<\/p:bodyStyle>/i
+        let align: LevelStyleDefaults["align"];
+        if (pPrAttr.includes('algn="ctr"')) align = "center";
+        else if (pPrAttr.includes('algn="r"')) align = "right";
+        else if (pPrAttr.includes('algn="just"')) align = "justify";
+        else if (pPrAttr.includes('algn="l"')) align = "left";
+
+        const defRPrXml =
+          pPrInner.match(
+            /<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>|<a:defRPr[^>]*\/>/i
+          )?.[0] || "";
+        const szM = defRPrXml.match(/sz="(\d+)"/);
+        const fontSize = szM
+          ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
+          : undefined;
+        const color = resolveColor(defRPrXml);
+        const fontM = defRPrXml.match(/<a:latin\s+typeface="([^"+][^"]*)"/);
+        const fontFamily = fontM ? fontM[1] : undefined;
+
+        const buNone = combined.includes("<a:buNone");
+        const buCharM = combined.match(/<a:buChar\s+[^>]*char="([^"]*)"/i);
+        const bullet =
+          !buNone &&
+          (Boolean(buCharM) || combined.includes("<a:buAutoNum"));
+
+        levels[lvlIdx] = {
+          fontSize,
+          color,
+          align,
+          fontFamily,
+          bullet,
+          buNone,
+          bulletChar: buCharM?.[1] ? decodeXmlEntities(buCharM[1]) : undefined,
+        };
+      }
+
+      // Also parse <a:defPPr> if present as level 0 fallback
+      if (!levels[0]) {
+        const defM = styleContainerXml.match(
+          /<a:defPPr([^>]*)>([\s\S]*?)<\/a:defPPr>/i
         );
-        if (bodyStyleM) {
-          const lvl1 = bodyStyleM[1].match(
-            /<a:lvl1pPr[^>]*>([\s\S]*?)<\/a:lvl1pPr>/i
-          );
-          const chunk = lvl1 ? lvl1[1] : bodyStyleM[1];
-          const szM = chunk.match(/<a:defRPr[^>]*sz="(\d+)"/i);
-          if (szM) masterBodyFontSize = Math.round(parseInt(szM[1], 10) / 100);
-          const clr = resolveColor(chunk);
-          if (clr) masterBodyColor = clr;
-          if (
-            !chunk.includes("<a:buNone") &&
-            (chunk.includes("<a:buChar") || chunk.includes("<a:buAutoNum"))
-          ) {
-            masterBodyHasBullet = true;
-          }
+        if (defM) {
+          const defRPr = defM[2].match(/<a:defRPr[\s\S]*?(?:<\/a:defRPr>|\/>)/i)?.[0] || "";
+          const szM = defRPr.match(/sz="(\d+)"/);
+          levels[0] = {
+            fontSize: szM
+              ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
+              : undefined,
+            color: resolveColor(defRPr),
+          };
         }
       }
-    } catch (e) {}
 
-    // 3. Pre-index all media images in the PPTX archive
+      return levels;
+    };
+
+    const extractPlaceholdersFromXml = (
+      rawXml: string
+    ): {
+      byIdx: Record<string, PlaceholderLayoutDef>;
+      byType: Record<string, PlaceholderLayoutDef>;
+    } => {
+      const byIdx: Record<string, PlaceholderLayoutDef> = {};
+      const byType: Record<string, PlaceholderLayoutDef> = {};
+      const cleanXml = stripAlternateFallback(rawXml);
+      const spTreeM = cleanXml.match(/<p:spTree>([\s\S]*?)<\/p:spTree>/i);
+      if (!spTreeM) return { byIdx, byType };
+
+      const collect = (xmlSegment: string) => {
+        for (const tok of extractTopLevelSpTreeTokens(xmlSegment)) {
+          if (tok.tag === "grpSp") {
+            const inner = tok.innerXml.replace(/^[\s\S]*?<\/p:grpSpPr>/i, "");
+            collect(inner);
+            continue;
+          }
+          if (tok.tag !== "sp") continue;
+
+          const nvSpPr =
+            tok.innerXml.match(/<p:nvSpPr>([\s\S]*?)<\/p:nvSpPr>/i)?.[1] || "";
+          const phM = nvSpPr.match(/<p:ph\s+([^>]*?)\/?>/i);
+          if (!phM) continue;
+
+          const phAttrs = phM[1];
+          const typeM = phAttrs.match(/type="([^"]+)"/);
+          const idxM = phAttrs.match(/idx="([^"]+)"/);
+          const phType = typeM?.[1];
+          const phIdx = idxM?.[1];
+
+          const spPr =
+            tok.innerXml.match(/<p:spPr>([\s\S]*?)<\/p:spPr>/i)?.[1] || "";
+          const offM = spPr.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
+          const extM = spPr.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
+
+          const spPrNoLn = spPr.replace(/<a:ln[\s>][\s\S]*?<\/a:ln>/gi, "");
+          let shapeBg: string | undefined;
+          if (!spPrNoLn.includes("<a:noFill")) {
+            const sfM =
+              spPrNoLn.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
+              spPrNoLn.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
+            if (sfM) shapeBg = resolveColor(sfM[0]);
+          }
+
+          let borderColor: string | undefined;
+          let borderWidth: number | undefined;
+          const lnM = spPr.match(/<a:ln([^>]*)>([\s\S]*?)<\/a:ln>/i);
+          if (lnM && !lnM[2].includes("<a:noFill")) {
+            const lc = resolveColor(lnM[2]);
+            if (lc) {
+              borderColor = lc;
+              const wM = lnM[1].match(/w="(\d+)"/);
+              borderWidth = wM
+                ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
+                : 1;
+            }
+          }
+
+          let borderRadius: number | undefined;
+          if (spPr.includes('prst="ellipse"')) borderRadius = 9999;
+          else if (spPr.includes('prst="roundRect"')) borderRadius = 12;
+
+          const txBody =
+            tok.innerXml.match(/<p:txBody>([\s\S]*?)<\/p:txBody>/i)?.[1] || "";
+          const bodyPr =
+            txBody.match(
+              /<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i
+            )?.[0] || "";
+          const anchorM = bodyPr.match(/anchor="([^"]+)"/);
+          const verticalAlign: PlaceholderLayoutDef["verticalAlign"] =
+            anchorM?.[1] === "ctr"
+              ? "center"
+              : anchorM?.[1] === "b"
+                ? "bottom"
+                : anchorM?.[1] === "t"
+                  ? "top"
+                  : undefined;
+
+          const lstStyleXml =
+            txBody.match(/<a:lstStyle>([\s\S]*?)<\/a:lstStyle>/i)?.[1] || "";
+          const lvlStyles = parseLevelStyles(lstStyleXml);
+
+          const def: PlaceholderLayoutDef = {
+            type: phType,
+            idx: phIdx,
+            x: offM ? parseInt(offM[1], 10) : undefined,
+            y: offM ? parseInt(offM[2], 10) : undefined,
+            cx: extM ? parseInt(extM[1], 10) : undefined,
+            cy: extM ? parseInt(extM[2], 10) : undefined,
+            shapeBg,
+            borderColor,
+            borderWidth,
+            borderRadius,
+            verticalAlign,
+            lvlStyles,
+          };
+
+          if (phIdx && !byIdx[phIdx]) byIdx[phIdx] = def;
+          if (phType && !byType[phType]) byType[phType] = def;
+        }
+      };
+
+      collect(spTreeM[1]);
+      return { byIdx, byType };
+    };
+
+    const parseBackgroundFromXml = (
+      xmlChunk: string,
+      rels: Record<string, { type: string; target: string }>,
+      mediaMapObj: Record<string, string>
+    ): { bgColor?: string; bgImage?: string } => {
+      const bgMatch = xmlChunk.match(/<p:bg>([\s\S]*?)<\/p:bg>/i);
+      if (!bgMatch) return {};
+      const bgInner = bgMatch[1];
+
+      let bgImage: string | undefined;
+      const imgM = bgInner.match(/r:embed="([^"]+)"/);
+      if (imgM && rels[imgM[1]]) {
+        const mediaKey = rels[imgM[1]].target;
+        if (mediaMapObj[mediaKey]) bgImage = mediaMapObj[mediaKey];
+      }
+
+      let bgColor: string | undefined;
+      const solidOrGrad =
+        bgInner.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
+        bgInner.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i) ||
+        bgInner.match(/<p:bgRef[^>]*>([\s\S]*?)<\/p:bgRef>/i);
+      if (solidOrGrad) {
+        bgColor = resolveColor(solidOrGrad[0]);
+      }
+
+      return { bgColor, bgImage };
+    };
+
+    // 3. Pre-index all media images in the PPTX archive by normalized full entry path (`ppt/media/...`)
     const mediaMap: Record<string, string> = {};
     zipEntries.forEach((entry) => {
       if (entry.entryName.startsWith("ppt/media/")) {
@@ -371,117 +761,264 @@ export function parsePptx(buffer: Buffer): {
           ext === "png"
             ? "image/png"
             : ext === "jpg" || ext === "jpeg"
-            ? "image/jpeg"
-            : ext === "svg"
-            ? "image/svg+xml"
-            : ext === "gif"
-            ? "image/gif"
-            : "image/png";
+              ? "image/jpeg"
+              : ext === "svg"
+                ? "image/svg+xml"
+                : ext === "gif"
+                  ? "image/gif"
+                  : "image/png";
         const base64 = entry.getData().toString("base64");
-        mediaMap[entry.entryName.replace("ppt/", "")] =
-          `data:${mime};base64,${base64}`;
+        mediaMap[entry.entryName] = `data:${mime};base64,${base64}`;
       }
     });
 
-    // 4. Find all slide XML entries
-    const slideEntries = zipEntries
+    // 4. Resolve true presentation slide order via `<p:sldIdLst>` + `ppt/_rels/presentation.xml.rels`
+    const presRels: Record<string, { type: string; target: string }> = {};
+    try {
+      const prXml = zip.readAsText("ppt/_rels/presentation.xml.rels");
+      if (prXml) {
+        Object.assign(presRels, parseRelationshipsXml(prXml, "ppt"));
+      }
+    } catch {}
+
+    const orderedEntryNames: string[] = [];
+    const sldIdLstM = presXml.match(/<p:sldIdLst>([\s\S]*?)<\/p:sldIdLst>/i);
+    if (sldIdLstM) {
+      for (const sldM of Array.from(
+        sldIdLstM[1].matchAll(/<p:sldId\s+([^>]+?)\/?\s*>/g)
+      )) {
+        const ridM = sldM[1].match(/r:id="([^"]+)"/);
+        const relTarget = ridM ? presRels[ridM[1]]?.target : undefined;
+        if (relTarget && !orderedEntryNames.includes(relTarget)) {
+          orderedEntryNames.push(relTarget);
+        }
+      }
+    }
+
+    const numericSlideEntries = zipEntries
       .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
       .sort((a, b) => {
-        const numA = parseInt(
-          a.entryName.match(/slide(\d+)\.xml/i)?.[1] || "0",
-          10
-        );
-        const numB = parseInt(
-          b.entryName.match(/slide(\d+)\.xml/i)?.[1] || "0",
-          10
-        );
+        const numA = parseInt(a.entryName.match(/slide(\d+)\.xml/i)?.[1] || "0", 10);
+        const numB = parseInt(b.entryName.match(/slide(\d+)\.xml/i)?.[1] || "0", 10);
         return numA - numB;
       });
+
+    const entryByName = new Map(zipEntries.map((e) => [e.entryName, e]));
+    const slideEntries =
+      orderedEntryNames.length > 0
+        ? [
+            ...orderedEntryNames
+              .map((name) => entryByName.get(name))
+              .filter((e): e is AdmZip.IZipEntry => Boolean(e)),
+            ...numericSlideEntries.filter((e) => !orderedEntryNames.includes(e.entryName)),
+          ]
+        : numericSlideEntries;
+
+    // Cache parsed layouts and masters across slides
+    const layoutCache = new Map<
+      string,
+      {
+        xml: string;
+        rels: Record<string, { type: string; target: string }>;
+        placeholders: ReturnType<typeof extractPlaceholdersFromXml>;
+        masterPath?: string;
+      }
+    >();
+
+    const masterCache = new Map<
+      string,
+      {
+        xml: string;
+        rels: Record<string, { type: string; target: string }>;
+        placeholders: ReturnType<typeof extractPlaceholdersFromXml>;
+        titleStyles: Record<number, LevelStyleDefaults>;
+        bodyStyles: Record<number, LevelStyleDefaults>;
+        otherStyles: Record<number, LevelStyleDefaults>;
+      }
+    >();
+
+    const getMasterData = (masterPath: string) => {
+      if (masterCache.has(masterPath)) return masterCache.get(masterPath)!;
+      let mXml = "";
+      try {
+        mXml = zip.readAsText(masterPath) || "";
+      } catch {}
+      const relsPath = masterPath.replace(
+        /ppt\/slideMasters\/([^/]+)$/,
+        "ppt/slideMasters/_rels/$1.rels"
+      );
+      let mRels: Record<string, { type: string; target: string }> = {};
+      try {
+        const rXml = zip.readAsText(relsPath);
+        if (rXml) mRels = parseRelationshipsXml(rXml, "ppt/slideMasters");
+      } catch {}
+
+      const placeholders = extractPlaceholdersFromXml(mXml);
+      const txStylesXml = mXml.match(/<p:txStyles>([\s\S]*?)<\/p:txStyles>/i)?.[1] || "";
+      const titleStyles = parseLevelStyles(
+        txStylesXml.match(/<p:titleStyle>([\s\S]*?)<\/p:titleStyle>/i)?.[1]
+      );
+      const bodyStyles = parseLevelStyles(
+        txStylesXml.match(/<p:bodyStyle>([\s\S]*?)<\/p:bodyStyle>/i)?.[1]
+      );
+      const otherStyles = parseLevelStyles(
+        txStylesXml.match(/<p:otherStyle>([\s\S]*?)<\/p:otherStyle>/i)?.[1]
+      );
+
+      const val = {
+        xml: mXml,
+        rels: mRels,
+        placeholders,
+        titleStyles,
+        bodyStyles,
+        otherStyles,
+      };
+      masterCache.set(masterPath, val);
+      return val;
+    };
+
+    const getLayoutData = (layoutPath: string) => {
+      if (layoutCache.has(layoutPath)) return layoutCache.get(layoutPath)!;
+      let lXml = "";
+      try {
+        lXml = zip.readAsText(layoutPath) || "";
+      } catch {}
+      const relsPath = layoutPath.replace(
+        /ppt\/slideLayouts\/([^/]+)$/,
+        "ppt/slideLayouts/_rels/$1.rels"
+      );
+      let lRels: Record<string, { type: string; target: string }> = {};
+      let masterPath: string | undefined;
+      try {
+        const rXml = zip.readAsText(relsPath);
+        if (rXml) {
+          lRels = parseRelationshipsXml(rXml, "ppt/slideLayouts");
+          masterPath = Object.values(lRels).find((r) =>
+            r.type.includes("slideMaster")
+          )?.target;
+        }
+      } catch {}
+
+      const val = {
+        xml: lXml,
+        rels: lRels,
+        placeholders: extractPlaceholdersFromXml(lXml),
+        masterPath,
+      };
+      layoutCache.set(layoutPath, val);
+      return val;
+    };
 
     const slides: RichSlide[] = [];
     let fullText = "";
 
     slideEntries.forEach((entry, idx) => {
       const slideNum = idx + 1;
-      const xml = entry.getData().toString("utf8");
+      const rawXml = entry.getData().toString("utf8");
+      const xml = stripAlternateFallback(rawXml);
 
-      // Slide relationships (for images and layouts)
-      const relsMap: Record<string, string> = {};
-      const relsFile =
-        entry.entryName.replace(
-          "ppt/slides/slide",
-          "ppt/slides/_rels/slide"
-        ) + ".rels";
-      let layoutTarget: string | undefined = undefined;
+      const relsFile = entry.entryName.replace(
+        "ppt/slides/",
+        "ppt/slides/_rels/"
+      ) + ".rels";
+      let relsMap: Record<string, { type: string; target: string }> = {};
+      let layoutPath: string | undefined;
       try {
         const rXml = zip.readAsText(relsFile);
-        for (const rm of Array.from(
-          rXml.matchAll(
-            /<Relationship\s+[^>]*Id="([^"]+)"[^>]*Type="([^"]+)"[^>]*Target="([^"]+)"/g
-          )
-        )) {
-          const target = rm[3].replace("../", "");
-          relsMap[rm[1]] = target;
-          if (rm[2].includes("slideLayout")) {
-            layoutTarget = target;
-          }
+        if (rXml) {
+          relsMap = parseRelationshipsXml(rXml, "ppt/slides");
+          layoutPath = Object.values(relsMap).find((r) =>
+            r.type.includes("slideLayout")
+          )?.target;
         }
-        // Fallback if attribute order differs in Relationship tag
-        for (const rm of Array.from(rXml.matchAll(/<Relationship\s+([^>]+)\/>/g))) {
-          const attrs = rm[1];
-          const idM = attrs.match(/Id="([^"]+)"/);
-          const typeM = attrs.match(/Type="([^"]+)"/);
-          const targetM = attrs.match(/Target="([^"]+)"/);
-          if (idM && targetM) {
-            const target = targetM[1].replace("../", "");
-            relsMap[idM[1]] = target;
-            if (typeM && typeM[1].includes("slideLayout")) {
-              layoutTarget = target;
-            }
-          }
-        }
-      } catch (e) {}
+      } catch {}
 
-      // Extract slide background color or image
-      let bgColor = "#ffffff";
-      let bgImage: string | undefined = undefined;
+      const layoutData = layoutPath ? getLayoutData(layoutPath) : undefined;
+      const masterPath =
+        layoutData?.masterPath || "ppt/slideMasters/slideMaster1.xml";
+      const masterData = getMasterData(masterPath);
 
-      const bgClrMatch = xml.match(
-        /<p:bg>[\s\S]*?(<a:solidFill>[\s\S]*?<\/a:solidFill>|<a:srgbClr[\s\S]*?\/>|<a:schemeClr[\s\S]*?\/>)/i
+      // Extract slide background color/image via inheritance: slide -> layout -> master
+      const slideBg = parseBackgroundFromXml(xml, relsMap, mediaMap);
+      const layBg = layoutData
+        ? parseBackgroundFromXml(layoutData.xml, layoutData.rels, mediaMap)
+        : {};
+      const masBg = parseBackgroundFromXml(
+        masterData.xml,
+        masterData.rels,
+        mediaMap
       );
-      if (bgClrMatch) {
-        const c = resolveColor(bgClrMatch[0]);
-        if (c) bgColor = c;
-      }
 
-      const bgImgMatch = xml.match(/<p:bg>[\s\S]*?r:embed="([^"]+)"/);
-      if (bgImgMatch && relsMap[bgImgMatch[1]]) {
-        const imgKey = relsMap[bgImgMatch[1]];
-        if (mediaMap[imgKey]) bgImage = mediaMap[imgKey];
-      }
+      const bgColor =
+        slideBg.bgColor || layBg.bgColor || masBg.bgColor || "#ffffff";
+      const bgImage = slideBg.bgImage || layBg.bgImage || masBg.bgImage;
 
-      // If background is not in slide, check layout
-      if (bgColor === "#ffffff" && !bgImage && layoutTarget) {
-        try {
-          const layXml = zip.readAsText(`ppt/${layoutTarget}`);
-          const layBgMatch = layXml.match(
-            /<p:bg>[\s\S]*?(<a:solidFill>[\s\S]*?<\/a:solidFill>|<a:srgbClr[\s\S]*?\/>|<a:schemeClr[\s\S]*?\/>)/i
-          );
-          if (layBgMatch) {
-            const lc = resolveColor(layBgMatch[0]);
-            if (lc) bgColor = lc;
-          }
-        } catch (e) {}
-      }
+      const defaultTitleSize =
+        masterData.titleStyles[0]?.fontSize || Math.round(36 * ptScale);
+      const defaultTitleColor =
+        masterData.titleStyles[0]?.color || `#${themeColors.tx1}`;
+      const defaultBodySize =
+        masterData.bodyStyles[0]?.fontSize || Math.round(20 * ptScale);
+      const defaultBodyColor =
+        masterData.bodyStyles[0]?.color || `#${themeColors.tx1}`;
+
+      const lookupPlaceholder = (
+        phType?: string,
+        phIdx?: string
+      ): PlaceholderLayoutDef | undefined => {
+        const findIn = (map?: {
+          byIdx: Record<string, PlaceholderLayoutDef>;
+          byType: Record<string, PlaceholderLayoutDef>;
+        }) => {
+          if (!map) return undefined;
+          if (phIdx && map.byIdx[phIdx]) return map.byIdx[phIdx];
+          if (phType && map.byType[phType]) return map.byType[phType];
+          if (phType === "ctrTitle" && map.byType["title"]) return map.byType["title"];
+          if (phType === "subTitle" && map.byType["body"]) return map.byType["body"];
+          if (phType === "obj" && map.byType["body"]) return map.byType["body"];
+          return undefined;
+        };
+        return (
+          findIn(layoutData?.placeholders) || findIn(masterData.placeholders)
+        );
+      };
 
       const elements: SlideElement[] = [];
       const contentParagraphs: string[] = [];
 
-      // Helper to clamp percentage values so no element gets cut off at slide edges
+      // Keep track of raw autofit candidate metadata so we can apply neighbor anti-overlap pass after all shapes are placed
+      interface PendingTextShape {
+        elementIndex: number;
+        leftPct: number;
+        topPct: number;
+        widthPct: number;
+        heightPct: number;
+        hasBoxStyling: boolean;
+        autofitScale: number;
+      }
+      const pendingTextShapes: PendingTextShape[] = [];
+
       const clampPct = (val: number, min = 0, max = 100) =>
         Math.min(max, Math.max(min, val));
 
-      // Recursive helper to parse shape trees in exact XML document z-order
+      const computeNormalizedBox = (
+        rawEffX: number,
+        rawEffY: number,
+        rawEffCx: number,
+        rawEffCy: number
+      ) => {
+        const clippedX = rawEffX < 0 ? 0 : rawEffX;
+        const clippedY = rawEffY < 0 ? 0 : rawEffY;
+        const adjCx = rawEffX < 0 ? Math.max(0, rawEffCx + rawEffX) : rawEffCx;
+        const adjCy = rawEffY < 0 ? Math.max(0, rawEffCy + rawEffY) : rawEffCy;
+
+        const leftPct = clampPct((clippedX / sldWidth) * 100, 0, 98);
+        const topPct = clampPct((clippedY / sldHeight) * 100, 0, 98);
+        const widthPct = clampPct((adjCx / sldWidth) * 100, 1.5, 100 - leftPct);
+        const heightPct = clampPct((adjCy / sldHeight) * 100, 1.5, 100 - topPct);
+        return { leftPct, topPct, widthPct, heightPct };
+      };
+
       function extractShapesFromXml(
         treeXml: string,
         gx: number,
@@ -489,30 +1026,18 @@ export function parsePptx(buffer: Buffer): {
         scaleX: number,
         scaleY: number
       ) {
-        // Match direct shapes, pictures, graphicFrames, and groups in exact XML order
-        const tokenRegex =
-          /<p:grpSp>([\s\S]*?)<\/p:grpSp>|<p:pic>([\s\S]*?)<\/p:pic>|<p:graphicFrame>([\s\S]*?)<\/p:graphicFrame>|<p:sp>([\s\S]*?)<\/p:sp>/g;
-
-        for (const match of Array.from(treeXml.matchAll(tokenRegex))) {
+        for (const tok of extractTopLevelSpTreeTokens(treeXml)) {
           const zIdx = elements.length + 1;
 
           // A. Group Shape (<p:grpSp>)
-          if (match[1] !== undefined) {
-            const grpXml = match[1];
+          if (tok.tag === "grpSp") {
+            const grpXml = tok.innerXml;
             const grpPrXml =
               grpXml.match(/<p:grpSpPr>([\s\S]*?)<\/p:grpSpPr>/i)?.[1] || "";
-            const offM = grpPrXml.match(
-              /<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/
-            );
-            const extM = grpPrXml.match(
-              /<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/
-            );
-            const chOffM = grpPrXml.match(
-              /<a:chOff\s+x="(-?\d+)"\s+y="(-?\d+)"/
-            );
-            const chExtM = grpPrXml.match(
-              /<a:chExt\s+cx="(\d+)"\s+cy="(\d+)"/
-            );
+            const offM = grpPrXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
+            const extM = grpPrXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
+            const chOffM = grpPrXml.match(/<a:chOff\s+x="(-?\d+)"\s+y="(-?\d+)"/);
+            const chExtM = grpPrXml.match(/<a:chExt\s+cx="(\d+)"\s+cy="(\d+)"/);
 
             const curGx = offM ? parseInt(offM[1], 10) : 0;
             const curGy = offM ? parseInt(offM[2], 10) : 0;
@@ -528,56 +1053,39 @@ export function parsePptx(buffer: Buffer): {
 
             const childBaseX = gx + (curGx - curChx * sX) * scaleX;
             const childBaseY = gy + (curGy - curChy * sY) * scaleY;
-            const childScaleX = scaleX * sX;
-            const childScaleY = scaleY * sY;
+            const innerChildrenXml = grpXml.replace(/^[\s\S]*?<\/p:grpSpPr>/i, "");
 
-            const innerChildrenXml = grpXml.replace(
-              /^[\s\S]*?<\/p:grpSpPr>/i,
-              ""
-            );
             extractShapesFromXml(
               innerChildrenXml,
               childBaseX,
               childBaseY,
-              childScaleX,
-              childScaleY
+              scaleX * sX,
+              scaleY * sY
             );
             continue;
           }
 
           // B. Picture (<p:pic>)
-          if (match[2] !== undefined) {
-            const pXml = match[2];
+          if (tok.tag === "pic") {
+            const pXml = tok.innerXml;
             const blipM = pXml.match(/r:embed="([^"]+)"/);
             const offM = pXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
             const extM = pXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
             const rId = blipM ? blipM[1] : null;
-            const target = rId ? relsMap[rId] : null;
+            const target = rId ? relsMap[rId]?.target : null;
 
             const px = offM ? parseInt(offM[1], 10) : 0;
             const py = offM ? parseInt(offM[2], 10) : 0;
             const pcx = extM ? parseInt(extM[1], 10) : 0;
             const pcy = extM ? parseInt(extM[2], 10) : 0;
 
-            const effX = Math.max(0, gx + px * scaleX);
-            const effY = Math.max(0, gy + py * scaleY);
-            const effCx = pcx * scaleX;
-            const effCy = pcy * scaleY;
-
-            const leftPct = clampPct((effX / sldWidth) * 100, 0, 98);
-            const topPct = clampPct((effY / sldHeight) * 100, 0, 98);
-            const widthPct = clampPct(
-              (effCx / sldWidth) * 100,
-              1,
-              100 - leftPct
-            );
-            const heightPct = clampPct(
-              (effCy / sldHeight) * 100,
-              1,
-              100 - topPct
-            );
-
-            if (target && mediaMap[target]) {
+            if (target && mediaMap[target] && pcx > 0 && pcy > 0) {
+              const { leftPct, topPct, widthPct, heightPct } = computeNormalizedBox(
+                gx + px * scaleX,
+                gy + py * scaleY,
+                pcx * scaleX,
+                pcy * scaleY
+              );
               elements.push({
                 id: `pic_${elements.length}`,
                 type: "image",
@@ -592,9 +1100,9 @@ export function parsePptx(buffer: Buffer): {
             continue;
           }
 
-          // C. Graphic Frame (Tables & SmartArt) (<p:graphicFrame>)
-          if (match[3] !== undefined) {
-            const gfXml = match[3];
+          // C. Graphic Frame (Tables, SmartArt Diagrams & Charts) (<p:graphicFrame>)
+          if (tok.tag === "graphicFrame") {
+            const gfXml = tok.innerXml;
             const offM = gfXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
             const extM = gfXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
 
@@ -603,10 +1111,15 @@ export function parsePptx(buffer: Buffer): {
             const fcx = extM ? parseInt(extM[1], 10) : 0;
             const fcy = extM ? parseInt(extM[2], 10) : 0;
 
-            const effX = Math.max(0, gx + fx * scaleX);
-            const effY = Math.max(0, gy + fy * scaleY);
-            const effCx = fcx * scaleX;
-            const effCy = fcy * scaleY;
+            const hasValidBox = fcx > 0 && fcy > 0;
+            const box = hasValidBox
+              ? computeNormalizedBox(
+                  gx + fx * scaleX,
+                  gy + fy * scaleY,
+                  fcx * scaleX,
+                  fcy * scaleY
+                )
+              : { leftPct: 5, topPct: 20, widthPct: 90, heightPct: 60 };
 
             const tblMatch = gfXml.match(/<a:tbl>([\s\S]*?)<\/a:tbl>/i);
             if (tblMatch) {
@@ -642,20 +1155,18 @@ export function parsePptx(buffer: Buffer): {
                   );
                   const bold = tcXml.includes('b="1"');
                   const tcPrXml =
-                    tcXml.match(/<a:tcPr[^>]*>([\s\S]*?)<\/a:tcPr>/i)?.[1] ||
-                    "";
+                    tcXml.match(/<a:tcPr[^>]*>([\s\S]*?)<\/a:tcPr>/i)?.[1] || "";
                   const fillMatch = tcPrXml.match(
                     /<a:solidFill>[\s\S]*?<\/a:solidFill>/i
                   );
-                  const cellBg = fillMatch
-                    ? resolveColor(fillMatch[0])
-                    : undefined;
+                  const cellBg = fillMatch ? resolveColor(fillMatch[0]) : undefined;
                   const cellClrMatch = tcXml.match(
                     /<a:rPr[^>]*>[\s\S]*?(<a:solidFill>[\s\S]*?<\/a:solidFill>)/i
                   );
                   const cellClr = cellClrMatch
                     ? resolveColor(cellClrMatch[1])
                     : undefined;
+                  if (cellText) contentParagraphs.push(cellText);
                   cells.push({
                     text: cellText,
                     bold,
@@ -667,37 +1178,84 @@ export function parsePptx(buffer: Buffer): {
               }
 
               if (rows.length > 0) {
-                const leftPct =
-                  effCx > 0 ? clampPct((effX / sldWidth) * 100, 0, 95) : 5;
-                const topPct =
-                  effCy > 0 ? clampPct((effY / sldHeight) * 100, 0, 95) : 20;
-                const widthPct =
-                  effCx > 0
-                    ? clampPct((effCx / sldWidth) * 100, 5, 100 - leftPct)
-                    : 90;
-                const heightPct =
-                  effCy > 0
-                    ? clampPct((effCy / sldHeight) * 100, 5, 100 - topPct)
-                    : 60;
-
                 elements.push({
                   id: `tbl_${elements.length}`,
                   type: "table",
-                  left: `${leftPct.toFixed(2)}%`,
-                  top: `${topPct.toFixed(2)}%`,
-                  width: `${widthPct.toFixed(2)}%`,
-                  height: `${heightPct.toFixed(2)}%`,
+                  left: `${box.leftPct.toFixed(2)}%`,
+                  top: `${box.topPct.toFixed(2)}%`,
+                  width: `${box.widthPct.toFixed(2)}%`,
+                  height: `${box.heightPct.toFixed(2)}%`,
                   zIndex: zIdx,
                   rows,
                 });
               }
+              continue;
+            }
+
+            // Extract SmartArt diagrams or Chart titles/labels if present
+            const dgmMatch = gfXml.match(/r:dm="([^"]+)"/);
+            const chartMatch = gfXml.match(/<c:chart[^>]*r:id="([^"]+)"/i);
+            const relId = dgmMatch?.[1] || chartMatch?.[1];
+            const relTarget = relId ? relsMap[relId]?.target : undefined;
+
+            if (relTarget) {
+              try {
+                const subXml = zip.readAsText(relTarget);
+                if (subXml) {
+                  const extractedItems = Array.from(
+                    subXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)
+                  )
+                    .map((m) => decodeXmlEntities(m[1]).replace(/\s+/g, " ").trim())
+                    .filter((t, i, arr) => t.length > 0 && arr.indexOf(t) === i)
+                    .slice(0, 16);
+
+                  if (extractedItems.length > 0) {
+                    contentParagraphs.push(...extractedItems);
+                    const paragraphs = extractedItems.map((line) => ({
+                      align: "left" as const,
+                      bullet: Boolean(dgmMatch),
+                      runs: [
+                        {
+                          text: line,
+                          color: defaultBodyColor,
+                          size: Math.max(11, Math.round(13 * ptScale)),
+                        },
+                      ],
+                    }));
+
+                    const elementIndex = elements.length;
+                    elements.push({
+                      id: `gf_${elementIndex}`,
+                      type: "text",
+                      left: `${box.leftPct.toFixed(2)}%`,
+                      top: `${box.topPct.toFixed(2)}%`,
+                      width: `${box.widthPct.toFixed(2)}%`,
+                      height: `${box.heightPct.toFixed(2)}%`,
+                      zIndex: zIdx,
+                      bgColor: "#f8fafc",
+                      borderColor: "#cbd5e1",
+                      borderWidth: 1,
+                      borderRadius: 8,
+                      verticalAlign: "center",
+                      paragraphs,
+                      rawText: extractedItems.join("\n"),
+                    });
+                    pendingTextShapes.push({
+                      elementIndex,
+                      ...box,
+                      hasBoxStyling: true,
+                      autofitScale: 1,
+                    });
+                  }
+                }
+              } catch {}
             }
             continue;
           }
 
           // D. Shape / Text Box (<p:sp>)
-          if (match[4] !== undefined) {
-            const spXml = match[4];
+          if (tok.tag === "sp") {
+            const spXml = tok.innerXml;
             const nvSpPrXml =
               spXml.match(/<p:nvSpPr>([\s\S]*?)<\/p:nvSpPr>/i)?.[1] || "";
             const spPrXml =
@@ -705,231 +1263,216 @@ export function parsePptx(buffer: Buffer): {
             const txBodyXml =
               spXml.match(/<p:txBody>([\s\S]*?)<\/p:txBody>/i)?.[1] || "";
 
+            const phM = nvSpPrXml.match(/<p:ph\s+([^>]*?)\/?>/i);
+            const phAttrs = phM?.[1] || "";
+            const phType = phAttrs.match(/type="([^"]+)"/)?.[1];
+            const phIdx = phAttrs.match(/idx="([^"]+)"/)?.[1];
+            const phDef = phM ? lookupPlaceholder(phType, phIdx) : undefined;
+
             const offM = spPrXml.match(/<a:off\s+x="(-?\d+)"\s+y="(-?\d+)"/);
             const extM = spPrXml.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
 
-            const sx = offM ? parseInt(offM[1], 10) : 0;
-            const sy = offM ? parseInt(offM[2], 10) : 0;
-            const scx = extM ? parseInt(extM[1], 10) : 0;
-            const scy = extM ? parseInt(extM[2], 10) : 0;
+            const sx = offM ? parseInt(offM[1], 10) : phDef?.x ?? 0;
+            const sy = offM ? parseInt(offM[2], 10) : phDef?.y ?? 0;
+            const scx = extM ? parseInt(extM[1], 10) : phDef?.cx ?? 0;
+            const scy = extM ? parseInt(extM[2], 10) : phDef?.cy ?? 0;
 
-            const effX = Math.max(0, gx + sx * scaleX);
-            const effY = Math.max(0, gy + sy * scaleY);
+            const rawEffX = gx + sx * scaleX;
+            const rawEffY = gy + sy * scaleY;
             const effCx = scx * scaleX;
             const effCy = scy * scaleY;
 
             // Check if shape has an image fill (<a:blipFill>) inside <p:spPr>
-            let shapeBlipSrc: string | undefined = undefined;
-            const spBlipM = spPrXml.match(
-              /<a:blipFill>[\s\S]*?r:embed="([^"]+)"/i
-            );
+            let shapeBlipSrc: string | undefined;
+            const spBlipM = spPrXml.match(/<a:blipFill>[\s\S]*?r:embed="([^"]+)"/i);
             if (spBlipM && relsMap[spBlipM[1]]) {
-              const target = relsMap[spBlipM[1]];
-              if (mediaMap[target]) {
-                shapeBlipSrc = mediaMap[target];
-              }
+              const target = relsMap[spBlipM[1]].target;
+              if (mediaMap[target]) shapeBlipSrc = mediaMap[target];
             }
 
             // Shape background fill (strictly inside <p:spPr>, excluding <a:ln>)
-            let shapeBg: string | undefined = undefined;
-            const spPrWithoutLn = spPrXml.replace(
-              /<a:ln[\s>][\s\S]*?<\/a:ln>/gi,
-              ""
-            );
+            let shapeBg: string | undefined;
+            const spPrWithoutLn = spPrXml.replace(/<a:ln[\s>][\s\S]*?<\/a:ln>/gi, "");
             if (!spPrWithoutLn.includes("<a:noFill")) {
-              const sFillM = spPrWithoutLn.match(
-                /<a:solidFill>[\s\S]*?<\/a:solidFill>/i
-              );
-              if (sFillM) {
-                shapeBg = resolveColor(sFillM[0]);
-              }
+              const sFillM =
+                spPrWithoutLn.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/i) ||
+                spPrWithoutLn.match(/<a:gradFill>[\s\S]*?<\/a:gradFill>/i);
+              if (sFillM) shapeBg = resolveColor(sFillM[0]);
+              else shapeBg = phDef?.shapeBg;
             }
 
             // Shape border / outline (<a:ln> inside <p:spPr>)
-            let borderColor: string | undefined = undefined;
-            let borderWidth: number | undefined = undefined;
+            let borderColor: string | undefined = phDef?.borderColor;
+            let borderWidth: number | undefined = phDef?.borderWidth;
             const lnM = spPrXml.match(/<a:ln([^>]*)>([\s\S]*?)<\/a:ln>/i);
-            if (lnM && !lnM[2].includes("<a:noFill")) {
-              const lnAttr = lnM[1];
-              const lnContent = lnM[2];
-              const lnClr = resolveColor(lnContent);
-              if (lnClr) {
-                borderColor = lnClr;
-                const wM = lnAttr.match(/w="(\d+)"/);
-                borderWidth = wM
-                  ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
-                  : 1;
+            if (lnM) {
+              if (lnM[2].includes("<a:noFill")) {
+                borderColor = undefined;
+                borderWidth = undefined;
+              } else {
+                const lnClr = resolveColor(lnM[2]);
+                if (lnClr) {
+                  borderColor = lnClr;
+                  const wM = lnM[1].match(/w="(\d+)"/);
+                  borderWidth = wM
+                    ? Math.max(1, Math.round(parseInt(wM[1], 10) / 12700))
+                    : 1;
+                }
               }
             }
 
-            // Geometry preset (rounded rectangle or ellipse/circle)
-            let borderRadius: number | undefined = undefined;
-            if (spPrXml.includes('prst="ellipse"')) {
-              borderRadius = 9999;
-            } else if (spPrXml.includes('prst="roundRect"')) {
-              borderRadius = 12;
-            }
+            let borderRadius: number | undefined = phDef?.borderRadius;
+            if (spPrXml.includes('prst="ellipse"')) borderRadius = 9999;
+            else if (spPrXml.includes('prst="roundRect"')) borderRadius = 12;
 
             // Vertical alignment on text container
-            let verticalAlign: "top" | "center" | "bottom" = "top";
+            let verticalAlign: "top" | "center" | "bottom" =
+              phDef?.verticalAlign || "top";
             const bodyPrXml =
-              txBodyXml.match(/<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i)?.[0] ||
-              "";
+              txBodyXml.match(
+                /<a:bodyPr[^>]*>([\s\S]*?)<\/a:bodyPr>|<a:bodyPr[^>]*\/>/i
+              )?.[0] || "";
             const anchorM = bodyPrXml.match(/anchor="([^"]+)"/);
             if (anchorM) {
               if (anchorM[1] === "ctr") verticalAlign = "center";
               else if (anchorM[1] === "b") verticalAlign = "bottom";
+              else if (anchorM[1] === "t") verticalAlign = "top";
             }
 
-            // Placeholder classification
             const isTitleShape =
+              phType === "title" ||
+              phType === "ctrTitle" ||
               nvSpPrXml.includes('type="title"') ||
               nvSpPrXml.includes('type="ctrTitle"');
-            const isSlideNum = nvSpPrXml.includes('type="sldNum"');
+            const isSlideNum =
+              phType === "sldNum" ||
+              phType === "ftr" ||
+              phType === "dt" ||
+              nvSpPrXml.includes('type="sldNum"');
             const isBodyPlaceholder =
               !isTitleShape &&
               !isSlideNum &&
-              (nvSpPrXml.includes('type="body"') ||
+              (phType === "body" ||
+                phType === "subTitle" ||
+                phType === "obj" ||
+                phIdx === "1" ||
+                nvSpPrXml.includes('type="body"') ||
                 nvSpPrXml.includes('idx="1"'));
 
-            // Extract shape-level <a:lstStyle> defaults
             const lstStyleXml =
-              txBodyXml.match(/<a:lstStyle>([\s\S]*?)<\/a:lstStyle>/i)?.[1] ||
-              "";
-            const lvl1Xml =
-              lstStyleXml.match(/<a:lvl1pPr[^>]*>([\s\S]*?)<\/a:lvl1pPr>/i)?.[0] ||
-              "";
-            let lstAlign: "left" | "center" | "right" | "justify" | undefined =
-              undefined;
-            if (lvl1Xml.includes('algn="ctr"')) lstAlign = "center";
-            else if (lvl1Xml.includes('algn="r"')) lstAlign = "right";
-            else if (lvl1Xml.includes('algn="just"')) lstAlign = "justify";
-            else if (lvl1Xml.includes('algn="l"')) lstAlign = "left";
+              txBodyXml.match(/<a:lstStyle>([\s\S]*?)<\/a:lstStyle>/i)?.[1] || "";
+            const shapeLvlStyles = parseLevelStyles(lstStyleXml);
+            const masterStyleMap = isTitleShape
+              ? masterData.titleStyles
+              : isBodyPlaceholder
+                ? masterData.bodyStyles
+                : masterData.otherStyles;
 
-            let lstFontSize: number | undefined = undefined;
-            const lstSzM = lvl1Xml.match(/<a:defRPr[^>]*sz="(\d+)"/i);
-            if (lstSzM) {
-              lstFontSize = Math.round(parseInt(lstSzM[1], 10) / 100);
-            }
-
-            const lstDefRPrXml =
-              lvl1Xml.match(/<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>/i)?.[1] ||
-              "";
-            const lstColor = resolveColor(lstDefRPrXml);
-            const lstFontM = lstDefRPrXml.match(
-              /<a:latin\s+typeface="([^"+][^"]*)"/
-            );
-            const lstFontFamily = lstFontM ? lstFontM[1] : undefined;
-            const lstBuNone = lvl1Xml.includes("<a:buNone");
-            const lstHasBullet =
-              !lstBuNone &&
-              (lvl1Xml.includes("<a:buChar") ||
-                lvl1Xml.includes("<a:buAutoNum"));
-
-            // Check explicit normAutofit fontScale in <a:bodyPr>
+            // Explicit normAutofit fontScale in <a:bodyPr>
             let autofitScale = 1;
             const fontScaleM = bodyPrXml.match(/fontScale="(\d+)"/);
             if (fontScaleM) {
               autofitScale = Math.max(
-                0.55,
+                0.5,
                 Math.min(1, parseInt(fontScaleM[1], 10) / 100000)
               );
             }
 
-            // Extract paragraphs inside this text box
             const pMatches =
               txBodyXml.match(/<a:p[\s>][\s\S]*?<\/a:p>/gi) || [];
-            const paragraphs: Array<{
-              align?: "left" | "center" | "right" | "justify";
-              bullet?: boolean;
-              runs: Array<{
-                text: string;
-                bold?: boolean;
-                italic?: boolean;
-                underline?: boolean;
-                color?: string;
-                size?: number;
-                fontFamily?: string;
-              }>;
-            }> = [];
+            const paragraphs: NonNullable<SlideElement["paragraphs"]> = [];
 
-            // Determine shape-wide fallback font size from any explicit run size in this shape
-            let shapeFallbackSize =
-              lstFontSize ||
-              (isTitleShape
-                ? masterTitleFontSize
-                : isBodyPlaceholder
-                ? masterBodyFontSize
-                : isSlideNum
-                ? 12
-                : 20);
             const firstExplicitSz = txBodyXml.match(/sz="(\d+)"/);
-            if (!lstFontSize && firstExplicitSz) {
-              shapeFallbackSize = Math.round(
-                parseInt(firstExplicitSz[1], 10) / 100
-              );
-            }
+            const firstExplicitScaled = firstExplicitSz
+              ? Math.max(9, Math.round((parseInt(firstExplicitSz[1], 10) / 100) * ptScale))
+              : undefined;
 
             for (const pXml of pMatches) {
               const pPrXml =
                 pXml.match(
                   /<a:pPr[^>]*>([\s\S]*?)<\/a:pPr>|<a:pPr[^>]*\/>/i
                 )?.[0] || "";
+              const pLvlM = pPrXml.match(/lvl="(\d+)"/);
+              const lvl = pLvlM ? Math.min(8, Math.max(0, parseInt(pLvlM[1], 10))) : 0;
+
+              const shLvl = shapeLvlStyles[lvl] || shapeLvlStyles[0];
+              const phLvl = phDef?.lvlStyles?.[lvl] || phDef?.lvlStyles?.[0];
+              const msLvl = masterStyleMap[lvl] || masterStyleMap[0];
 
               let align: "left" | "center" | "right" | "justify" =
-                lstAlign ||
-                (nvSpPrXml.includes('type="ctrTitle"') ? "center" : "left");
+                shLvl?.align ||
+                phLvl?.align ||
+                msLvl?.align ||
+                (phType === "ctrTitle" ? "center" : "left");
               if (pPrXml.includes('algn="ctr"')) align = "center";
               else if (pPrXml.includes('algn="r"')) align = "right";
               else if (pPrXml.includes('algn="just"')) align = "justify";
               else if (pPrXml.includes('algn="l"')) align = "left";
 
-              // Default run properties from <a:pPr><a:defRPr>
               const pDefRPrXml =
                 pPrXml.match(
                   /<a:defRPr[^>]*>([\s\S]*?)<\/a:defRPr>|<a:defRPr[^>]*\/>/i
                 )?.[0] || "";
-              const defClr = resolveColor(pDefRPrXml) || lstColor;
+              const defClr =
+                resolveColor(pDefRPrXml) ||
+                shLvl?.color ||
+                phLvl?.color ||
+                msLvl?.color;
               const pDefSzM = pDefRPrXml.match(/sz="(\d+)"/);
               const pDefSize = pDefSzM
-                ? Math.round(parseInt(pDefSzM[1], 10) / 100)
+                ? Math.max(9, Math.round((parseInt(pDefSzM[1], 10) / 100) * ptScale))
                 : undefined;
               const pDefFontM = pDefRPrXml.match(
                 /<a:latin\s+typeface="([^"+][^"]*)"/
               );
-              const pDefFont = pDefFontM ? pDefFontM[1] : lstFontFamily;
+              const pDefFont =
+                pDefFontM?.[1] ||
+                shLvl?.fontFamily ||
+                phLvl?.fontFamily ||
+                msLvl?.fontFamily;
 
-              // Strict bullet detection
               let hasBullet = false;
+              let bulletChar: string | undefined;
+              const pBuCharM = pPrXml.match(/<a:buChar\s+[^>]*char="([^"]*)"/i);
               if (pPrXml.includes("<a:buNone")) {
                 hasBullet = false;
-              } else if (
-                pPrXml.includes("<a:buChar") ||
-                pPrXml.includes("<a:buAutoNum")
-              ) {
+              } else if (pBuCharM || pPrXml.includes("<a:buAutoNum")) {
                 hasBullet = true;
-              } else if (lstBuNone) {
+                bulletChar = pBuCharM?.[1] ? decodeXmlEntities(pBuCharM[1]) : undefined;
+              } else if (shLvl?.buNone) {
                 hasBullet = false;
-              } else if (lstHasBullet) {
+              } else if (shLvl?.bullet) {
                 hasBullet = true;
-              } else if (isBodyPlaceholder) {
-                hasBullet = masterBodyHasBullet;
+                bulletChar = shLvl.bulletChar;
+              } else if (phLvl?.buNone) {
+                hasBullet = false;
+              } else if (phLvl?.bullet) {
+                hasBullet = true;
+                bulletChar = phLvl.bulletChar;
+              } else if (isBodyPlaceholder && !msLvl?.buNone) {
+                hasBullet = Boolean(msLvl?.bullet);
+                bulletChar = msLvl?.bulletChar;
               }
 
-              // Extract all runs (<a:r>), fields (<a:fld>), and line breaks (<a:br>) accurately
               const runMatches =
                 pXml.match(
                   /<a:r[\s>][\s\S]*?<\/a:r>|<a:fld[\s>][\s\S]*?<\/a:fld>|<a:br[\s>][\s\S]*?<\/a:br>|<a:br\s*\/>/gi
                 ) || [];
-              const runs: Array<{
-                text: string;
-                bold?: boolean;
-                italic?: boolean;
-                underline?: boolean;
-                color?: string;
-                size?: number;
-                fontFamily?: string;
-              }> = [];
+              const runs: NonNullable<SlideElement["paragraphs"]>[number]["runs"] =
+                [];
+
+              const fallbackLvlSize =
+                shLvl?.fontSize ||
+                phLvl?.fontSize ||
+                msLvl?.fontSize ||
+                firstExplicitScaled ||
+                (isTitleShape
+                  ? defaultTitleSize
+                  : isBodyPlaceholder
+                    ? defaultBodySize
+                    : isSlideNum
+                      ? Math.round(11 * ptScale)
+                      : Math.round(18 * ptScale));
 
               for (const rXml of runMatches) {
                 if (/^<a:br[\s/>]/i.test(rXml)) {
@@ -957,17 +1500,15 @@ export function parsePptx(buffer: Buffer): {
                   (isTitleShape && shapeBg
                     ? "#ffffff"
                     : isTitleShape
-                    ? masterTitleColor
-                    : masterBodyColor);
+                      ? defaultTitleColor
+                      : defaultBodyColor);
 
                 const szM = rPrXml.match(/sz="(\d+)"/);
                 const rawSize = szM
-                  ? Math.round(parseInt(szM[1], 10) / 100)
-                  : pDefSize || shapeFallbackSize;
+                  ? Math.max(9, Math.round((parseInt(szM[1], 10) / 100) * ptScale))
+                  : pDefSize || fallbackLvlSize;
 
-                const fontM = rPrXml.match(
-                  /<a:latin\s+typeface="([^"+][^"]*)"/
-                );
+                const fontM = rPrXml.match(/<a:latin\s+typeface="([^"+][^"]*)"/);
                 const fontFamily = fontM ? fontM[1] : pDefFont;
 
                 runs.push({
@@ -981,135 +1522,59 @@ export function parsePptx(buffer: Buffer): {
                 });
               }
 
-              // Don't show bullet on whitespace-only paragraphs
-              const visibleParaText = runs
-                .map((r) => r.text)
-                .join("")
-                .trim();
+              const visibleParaText = runs.map((r) => r.text).join("").trim();
               if (runs.length > 0 && visibleParaText.length > 0) {
                 paragraphs.push({
                   align,
                   bullet: hasBullet,
+                  bulletChar,
+                  level: lvl,
                   runs,
                 });
                 contentParagraphs.push(visibleParaText);
               }
             }
 
-            // If this shape is purely an image container (<a:blipFill>) with no text
-            if (shapeBlipSrc && paragraphs.length === 0) {
-              const leftPct = clampPct((effX / sldWidth) * 100, 0, 98);
-              const topPct = clampPct((effY / sldHeight) * 100, 0, 98);
-              const widthPct = clampPct(
-                (effCx / sldWidth) * 100,
-                1,
-                100 - leftPct
-              );
-              const heightPct = clampPct(
-                (effCy / sldHeight) * 100,
-                1,
-                100 - topPct
-              );
+            // Image-fill shape with no text
+            if (shapeBlipSrc && paragraphs.length === 0 && effCx > 0 && effCy > 0) {
+              const box = computeNormalizedBox(rawEffX, rawEffY, effCx, effCy);
               elements.push({
                 id: `sp_img_${elements.length}`,
                 type: "image",
-                left: `${leftPct.toFixed(2)}%`,
-                top: `${topPct.toFixed(2)}%`,
-                width: `${widthPct.toFixed(2)}%`,
-                height: `${heightPct.toFixed(2)}%`,
+                left: `${box.leftPct.toFixed(2)}%`,
+                top: `${box.topPct.toFixed(2)}%`,
+                width: `${box.widthPct.toFixed(2)}%`,
+                height: `${box.heightPct.toFixed(2)}%`,
                 zIndex: zIdx,
                 src: shapeBlipSrc,
               });
               continue;
             }
 
-            // Smart Autofit calculation: ensures text fits inside its shape box and slide height without cutoff
-            if (paragraphs.length > 0 && effCx > 0 && effCy > 0) {
-              const boxWidthPx = Math.max(120, (effCx / sldWidth) * 960 - 20);
-              const remainingSlideHeightPx = Math.max(
-                40,
-                ((sldHeight - effY) / sldHeight) * 540 - 8
-              );
-              const rawBoxHeightPx = (effCy / sldHeight) * 540;
-              const boxHeightPx =
-                shapeBg || borderColor
-                  ? Math.min(rawBoxHeightPx, remainingSlideHeightPx)
-                  : Math.min(
-                      Math.max(rawBoxHeightPx, remainingSlideHeightPx),
-                      remainingSlideHeightPx
-                    );
-
-              const estimateTotalHeight = (scaleFactor: number) => {
-                let h = 0;
-                for (const p of paragraphs) {
-                  const maxRunSize =
-                    Math.max(...p.runs.map((r) => r.size || 20)) * scaleFactor;
-                  const linesByBr = p.runs
-                    .map((r) => r.text)
-                    .join("")
-                    .split("\n");
-                  let paraLines = 0;
-                  const usableWidth = p.bullet ? boxWidthPx - 22 : boxWidthPx;
-                  const charsPerLine = Math.max(
-                    10,
-                    Math.floor(usableWidth / (maxRunSize * 0.53))
-                  );
-                  for (const lineStr of linesByBr) {
-                    const trimmedLen = lineStr.trim().length || 1;
-                    paraLines += Math.max(
-                      1,
-                      Math.ceil(trimmedLen / charsPerLine)
-                    );
-                  }
-                  h += paraLines * (maxRunSize * 1.2) + 5;
-                }
-                return h;
-              };
-
-              let finalScale = autofitScale;
-              let estH = estimateTotalHeight(finalScale);
-              while (estH > boxHeightPx * 0.95 && finalScale > 0.52) {
-                finalScale *= 0.93;
-                estH = estimateTotalHeight(finalScale);
-              }
-
-              if (finalScale < 0.99) {
-                for (const p of paragraphs) {
-                  for (const r of p.runs) {
-                    if (r.size) {
-                      r.size = Math.max(11, Math.round(r.size * finalScale));
-                    }
-                  }
-                }
-              }
-            }
-
-            if (paragraphs.length > 0 || shapeBg || borderColor) {
+            if (paragraphs.length > 0 || (shapeBg && effCx > 0 && effCy > 0) || borderColor) {
               const rawShapeText = paragraphs
                 .map((p) => p.runs.map((r) => r.text).join(""))
                 .join("\n");
 
-              const leftPct =
-                effCx > 0 ? clampPct((effX / sldWidth) * 100, 0, 98) : 5;
-              const topPct =
-                effCy > 0 ? clampPct((effY / sldHeight) * 100, 0, 96) : 10;
-              const widthPct =
-                effCx > 0
-                  ? clampPct((effCx / sldWidth) * 100, 2, 100 - leftPct)
-                  : 90;
-              const heightPct =
-                effCy > 0
-                  ? clampPct((effCy / sldHeight) * 100, 2, 100 - topPct)
-                  : 80;
+              const hasValidBox = effCx > 0 && effCy > 0;
+              const box = hasValidBox
+                ? computeNormalizedBox(rawEffX, rawEffY, effCx, effCy)
+                : isTitleShape
+                  ? { leftPct: 6, topPct: 6, widthPct: 88, heightPct: 16 }
+                  : isSlideNum
+                    ? { leftPct: 82, topPct: 91, widthPct: 14, heightPct: 6 }
+                    : { leftPct: 6, topPct: 25, widthPct: 88, heightPct: 66 };
 
+              const hasBoxStyling = Boolean(shapeBg || borderColor);
+              const elementIndex = elements.length;
               elements.push({
-                id: `sp_${elements.length}`,
+                id: `sp_${elementIndex}`,
                 type: "text",
                 isTitle: isTitleShape,
-                left: `${leftPct.toFixed(2)}%`,
-                top: `${topPct.toFixed(2)}%`,
-                width: `${widthPct.toFixed(2)}%`,
-                height: `${heightPct.toFixed(2)}%`,
+                left: `${box.leftPct.toFixed(2)}%`,
+                top: `${box.topPct.toFixed(2)}%`,
+                width: `${box.widthPct.toFixed(2)}%`,
+                height: `${box.heightPct.toFixed(2)}%`,
                 zIndex: zIdx,
                 bgColor: shapeBg,
                 borderColor,
@@ -1119,18 +1584,121 @@ export function parsePptx(buffer: Buffer): {
                 paragraphs,
                 rawText: rawShapeText,
               });
+
+              if (paragraphs.length > 0) {
+                pendingTextShapes.push({
+                  elementIndex,
+                  ...box,
+                  hasBoxStyling,
+                  autofitScale,
+                });
+              }
             }
           }
         }
       }
 
-      // Execute extraction on the slide's <p:spTree>
-      const spTreeMatch = xml.match(/<p:spTree>([\s\S]*?)<\/p:spTree>/);
+      // Execute extraction on the slide's `<p:spTree>`
+      const spTreeMatch = xml.match(/<p:spTree>([\s\S]*?)<\/p:spTree>/i);
       if (spTreeMatch) {
         extractShapesFromXml(spTreeMatch[1], 0, 0, 1, 1);
       }
 
-      // Determine slide title
+      // Smart Autofit + Anti-Overlap Neighbor Pass across all text shapes on this slide
+      for (const item of pendingTextShapes) {
+        const el = elements[item.elementIndex];
+        if (!el?.paragraphs || el.paragraphs.length === 0) continue;
+
+        const padX = item.hasBoxStyling ? 20 : 8;
+        const padY = item.hasBoxStyling ? 8 : 4;
+        const boxWidthPx = Math.max(36, (item.widthPct / 100) * 960 - padX);
+        const rawBoxHeightPx = Math.max(18, (item.heightPct / 100) * baseHeight - padY);
+        const boxTopPx = (item.topPct / 100) * baseHeight;
+        const remainingSlideHeightPx = Math.max(24, baseHeight - boxTopPx - 6);
+
+        // Find closest distinct content element positioned directly below this element
+        let nearestBelowTopPx = baseHeight - 4;
+        for (const other of elements) {
+          if (other.id === el.id) continue;
+          const oLeft = parseFloat(other.left);
+          const oTop = parseFloat(other.top);
+          const oWidth = parseFloat(other.width);
+          const oHeight = parseFloat(other.height);
+          // Skip purely decorative backdrop shapes behind this element
+          const isBackdrop =
+            other.type === "text" &&
+            (!other.paragraphs || other.paragraphs.length === 0) &&
+            oWidth > item.widthPct * 0.9 &&
+            oHeight > item.heightPct * 0.9;
+          if (isBackdrop) continue;
+
+          const overlapLeft = Math.max(item.leftPct, oLeft);
+          const overlapRight = Math.min(
+            item.leftPct + item.widthPct,
+            oLeft + oWidth
+          );
+          const horizOverlap = overlapRight - overlapLeft;
+          const minNeededOverlap = Math.min(item.widthPct, oWidth) * 0.15;
+
+          if (horizOverlap > minNeededOverlap && oTop > item.topPct + 1.5) {
+            const otherTopPx = (oTop / 100) * baseHeight;
+            if (otherTopPx < nearestBelowTopPx) {
+              nearestBelowTopPx = otherTopPx;
+            }
+          }
+        }
+
+        const spaceUntilBelowPx = Math.max(20, nearestBelowTopPx - boxTopPx - 4);
+        const maxAllowedHeightPx = item.hasBoxStyling
+          ? Math.min(rawBoxHeightPx, spaceUntilBelowPx, remainingSlideHeightPx)
+          : Math.min(
+              Math.max(rawBoxHeightPx, Math.min(rawBoxHeightPx + 12, spaceUntilBelowPx)),
+              spaceUntilBelowPx,
+              remainingSlideHeightPx
+            );
+
+        const estimateTotalHeight = (scaleFactor: number) => {
+          let h = 0;
+          for (const p of el.paragraphs || []) {
+            const rawMaxSize = Math.max(...p.runs.map((r) => r.size || 16));
+            const maxRunSize = Math.max(9, rawMaxSize * scaleFactor);
+            const hasBold = p.runs.some((r) => r.bold);
+            const charWidthFactor = hasBold ? 0.61 : 0.56;
+            const indentPx = (p.level || 0) * 14 + (p.bullet ? 20 : 0);
+            const usableWidth = Math.max(24, boxWidthPx - indentPx);
+            const charsPerLine = Math.max(
+              6,
+              Math.floor(usableWidth / (maxRunSize * charWidthFactor))
+            );
+            const linesByBr = p.runs.map((r) => r.text).join("").split("\n");
+            let paraLines = 0;
+            for (const lineStr of linesByBr) {
+              const len = lineStr.trim().length || 1;
+              paraLines += Math.max(1, Math.ceil(len / charsPerLine));
+            }
+            h += paraLines * (maxRunSize * 1.2) + 4;
+          }
+          return h;
+        };
+
+        let finalScale = item.autofitScale;
+        let estH = estimateTotalHeight(finalScale);
+        while (estH > maxAllowedHeightPx * 0.94 && finalScale > 0.48) {
+          finalScale *= 0.92;
+          estH = estimateTotalHeight(finalScale);
+        }
+
+        if (finalScale < 0.99) {
+          for (const p of el.paragraphs) {
+            for (const r of p.runs) {
+              if (r.size) {
+                r.size = Math.max(9, Math.round(r.size * finalScale));
+              }
+            }
+          }
+        }
+      }
+
       const titleElem = elements.find((el) => el.isTitle && el.rawText?.trim());
       const title =
         titleElem?.rawText?.trim() ||
@@ -1187,16 +1755,67 @@ export function parsePptx(buffer: Buffer): {
   }
 }
 
+function detectFileTypeFromBuffer(
+  buffer: Buffer
+): "pdf" | "docx" | "pptx" | "unknown" {
+  if (
+    buffer.length >= 5 &&
+    buffer.subarray(0, 5).toString("latin1") === "%PDF-"
+  ) {
+    return "pdf";
+  }
+
+  if (buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    try {
+      const zip = new AdmZip(buffer);
+      if (
+        zip.getEntry("ppt/presentation.xml") ||
+        zip.getEntries().some((entry) => entry.entryName.startsWith("ppt/slides/"))
+      ) {
+        return "pptx";
+      }
+      if (zip.getEntry("word/document.xml")) {
+        return "docx";
+      }
+    } catch {
+      // Ignore invalid zip signatures and continue sniffing
+    }
+  }
+
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0
+  ) {
+    if (buffer.includes(Buffer.from("PowerPoint Document", "utf16le"))) {
+      return "pptx";
+    }
+    if (buffer.includes(Buffer.from("WordDocument", "utf16le"))) {
+      return "docx";
+    }
+  }
+
+  return "unknown";
+}
+
 /**
  * Universal document parser: reads any PDF, DOCX, or PPTX from disk or URL
  */
-export async function parseDocument(fileUrl: string): Promise<ParsedDocument> {
-  const cacheKey = `v4:${fileUrl}`;
+export async function parseDocument(
+  fileUrl: string,
+  fileName?: string
+): Promise<ParsedDocument> {
+  const cacheKey = `v5:${fileUrl}:${fileName || ""}`;
   if (documentCache.has(cacheKey)) {
     return documentCache.get(cacheKey)!;
   }
 
-  const fileType = getFileType(fileUrl);
+  let fileType = getFileType(fileName || "");
+  if (fileType === "unknown") {
+    fileType = getFileType(fileUrl);
+  }
   let buffer: Buffer;
 
   if (fileUrl.startsWith("/api/files/")) {
@@ -1235,6 +1854,10 @@ export async function parseDocument(fileUrl: string): Promise<ParsedDocument> {
       if (!stored) throw new Error(`File not found: ${fileUrl}`);
       buffer = stored;
     }
+  }
+
+  if (fileType === "unknown") {
+    fileType = detectFileTypeFromBuffer(buffer);
   }
 
   let result: ParsedDocument;

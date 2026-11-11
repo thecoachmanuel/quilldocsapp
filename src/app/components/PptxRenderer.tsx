@@ -26,6 +26,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { RichSlide } from "@/lib/document-parser";
+import {
+  clearPendingPageJump,
+  consumePendingPageJump,
+  peekPendingPageJump,
+} from "@/lib/page-jump";
 import { useResizeDetector } from "react-resize-detector";
 import { cn } from "@/lib/utils";
 
@@ -93,7 +98,14 @@ export default function PptxRenderer({
       if (detail.fileId && detail.fileId !== fileId) return;
 
       if (!isLoading && slides.length > 0) {
-        const targetSlide = Math.min(Math.max(1, detail.page), slides.length);
+        const matchingSlide =
+          slides.find((s) => s.slideNumber === detail.page) ||
+          slides[Math.min(Math.max(1, detail.page), slides.length) - 1];
+        const targetSlide = matchingSlide
+          ? matchingSlide.slideNumber
+          : Math.min(Math.max(1, detail.page), slides.length);
+        pendingJumpSlideRef.current = null;
+        clearPendingPageJump(fileId);
         setCurrSlide(targetSlide);
       } else {
         pendingJumpSlideRef.current = detail.page;
@@ -101,19 +113,27 @@ export default function PptxRenderer({
     };
     window.addEventListener("quill:jump-to-page", handleJump);
     return () => window.removeEventListener("quill:jump-to-page", handleJump);
-  }, [isLoading, slides.length, fileId]);
+  }, [isLoading, slides, fileId]);
 
-  // Apply deferred citation jump once presentation slides finish parsing
+  // Apply deferred or cross-document persisted citation jump once presentation slides finish parsing
   useEffect(() => {
-    if (!isLoading && slides.length > 0 && pendingJumpSlideRef.current !== null) {
-      const targetSlide = Math.min(
-        Math.max(1, pendingJumpSlideRef.current),
-        slides.length
-      );
-      pendingJumpSlideRef.current = null;
-      setCurrSlide(targetSlide);
+    if (!isLoading && slides.length > 0) {
+      const pendingPage =
+        pendingJumpSlideRef.current ??
+        consumePendingPageJump(fileId)?.page ??
+        null;
+      if (pendingPage !== null) {
+        const matchingSlide =
+          slides.find((s) => s.slideNumber === pendingPage) ||
+          slides[Math.min(Math.max(1, pendingPage), slides.length) - 1];
+        const targetSlide = matchingSlide
+          ? matchingSlide.slideNumber
+          : Math.min(Math.max(1, pendingPage), slides.length);
+        pendingJumpSlideRef.current = null;
+        setCurrSlide(targetSlide);
+      }
     }
-  }, [isLoading, slides.length]);
+  }, [isLoading, slides, fileId]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
   useEffect(() => {
@@ -221,6 +241,7 @@ export default function PptxRenderer({
     let isMounted = true;
     setIsLoading(true);
     setError(null);
+    setSlides([]);
 
     fetch(`/api/document-content?fileId=${encodeURIComponent(fileId)}`)
       .then((res) => {
@@ -234,8 +255,27 @@ export default function PptxRenderer({
           data.parsed.slides &&
           data.parsed.slides.length > 0
         ) {
-          setSlides(data.parsed.slides);
-          setCurrSlide(1);
+          const parsedSlides: RichSlide[] = data.parsed.slides;
+          const pendingPage =
+            pendingJumpSlideRef.current ??
+            consumePendingPageJump(fileId)?.page ??
+            peekPendingPageJump(fileId)?.page ??
+            null;
+          let initialSlide = 1;
+          if (pendingPage !== null) {
+            const matched =
+              parsedSlides.find((s) => s.slideNumber === pendingPage) ||
+              parsedSlides[
+                Math.min(Math.max(1, pendingPage), parsedSlides.length) - 1
+              ];
+            initialSlide = matched
+              ? matched.slideNumber
+              : Math.min(Math.max(1, pendingPage), parsedSlides.length);
+            pendingJumpSlideRef.current = null;
+            clearPendingPageJump(fileId);
+          }
+          setSlides(parsedSlides);
+          setCurrSlide(initialSlide);
           if (data.parsed.aspectRatio) {
             setPresentationAspectRatio(data.parsed.aspectRatio);
           }
@@ -331,8 +371,8 @@ export default function PptxRenderer({
         availableHeight && availableHeight > 120
           ? availableHeight - 24
           : windowHeight > 300
-          ? windowHeight * 0.92 - 150
-          : 540;
+            ? windowHeight * 0.92 - 150
+            : 540;
       heightFitScale = Math.max(180, availH) / BASE_HEIGHT;
     } else if (widthToUse >= 640 && windowHeight > 450) {
       heightFitScale = Math.max(240, windowHeight - 210) / BASE_HEIGHT;
@@ -454,9 +494,9 @@ export default function PptxRenderer({
                       left: el.left,
                       top: el.top,
                       width: el.width,
-                      minHeight: el.height,
-                      height: hasBoxStyling ? "auto" : el.height,
-                      overflow: "visible",
+                      height: el.height,
+                      maxHeight: el.height,
+                      overflow: "hidden",
                       justifyContent:
                         el.verticalAlign === "center"
                           ? "center"
@@ -472,44 +512,65 @@ export default function PptxRenderer({
                       borderRadius: el.borderRadius
                         ? `${el.borderRadius}px`
                         : undefined,
-                      padding: hasBoxStyling ? "4px 10px" : "2px 4px",
+                      padding: hasBoxStyling ? "3px 8px" : "1px 3px",
                       boxSizing: "border-box",
                       zIndex: el.zIndex,
                     }}
                   >
                     {el.paragraphs && el.paragraphs.length > 0 ? (
                       el.paragraphs.map((para, pIdx) => {
-                        const firstRunSize = para.runs[0]?.size || 20;
+                        const firstRunSize =
+                          para.runs.find((r) => typeof r.size === "number")
+                            ?.size || 18;
+                        const indentPx =
+                          para.level && para.level > 0
+                            ? Math.min(para.level, 6) * 14
+                            : 0;
+                        const bulletText = para.bulletChar || "•";
+                        const bulletColor = para.runs[0]?.color || "#27272a";
                         return (
                           <div
                             key={pIdx}
-                            style={{ textAlign: para.align || "left" }}
-                            className="flex items-start gap-2 my-[2px]"
+                            style={{
+                              textAlign: para.align || "left",
+                              paddingLeft: indentPx ? `${indentPx}px` : undefined,
+                            }}
+                            className="flex items-start gap-1.5 my-[1px]"
                           >
                             {para.bullet && (
                               <span
                                 style={{
-                                  fontSize: `${Math.max(12, Math.round(firstRunSize * 0.85))}px`,
+                                  fontSize: `${Math.max(10, Math.round(firstRunSize * 0.85))}px`,
                                   lineHeight: 1.18,
+                                  color: bulletColor,
                                 }}
-                                className="text-zinc-800 font-bold shrink-0 select-none"
+                                className="font-bold shrink-0 select-none"
                               >
-                                ❑
+                                {bulletText}
                               </span>
                             )}
                             <p
                               style={{
                                 textAlign: para.align || "left",
                                 width: "100%",
+                                margin: 0,
+                                fontSize: `${firstRunSize}px`,
                                 lineHeight: 1.18,
                                 whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
+                                overflowWrap: "break-word",
                               }}
                             >
                               {para.runs.map((run, rIdx) => {
                                 if (run.text === "\n") {
                                   return <br key={rIdx} />;
                                 }
+                                const resolvedFontFamily = run.fontFamily
+                                  ? /times|georgia|garamond|cambria|palatino|baskerville|serif/i.test(
+                                      run.fontFamily
+                                    )
+                                    ? `"${run.fontFamily}", Georgia, serif`
+                                    : `"${run.fontFamily}", "Inter", ui-sans-serif, system-ui, sans-serif`
+                                  : '"Inter", ui-sans-serif, system-ui, sans-serif';
                                 return (
                                   <span
                                     key={rIdx}
@@ -525,9 +586,7 @@ export default function PptxRenderer({
                                       fontSize: run.size
                                         ? `${run.size}px`
                                         : "18px",
-                                      fontFamily: run.fontFamily
-                                        ? `"${run.fontFamily}", serif`
-                                        : undefined,
+                                      fontFamily: resolvedFontFamily,
                                       lineHeight: 1.18,
                                     }}
                                   >
@@ -671,11 +730,10 @@ export default function PptxRenderer({
             <button
               type="button"
               onClick={() => setViewMode("visual")}
-              className={`px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all ${
-                viewMode === "visual"
+              className={`px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all ${viewMode === "visual"
                   ? "bg-white text-zinc-900 font-semibold shadow-sm"
                   : "text-zinc-600 hover:text-zinc-900"
-              }`}
+                }`}
             >
               <MonitorPlay className="h-3 w-3 shrink-0" />
               <span className="hidden sm:inline">Slide View</span>
@@ -684,11 +742,10 @@ export default function PptxRenderer({
             <button
               type="button"
               onClick={() => setViewMode("outline")}
-              className={`px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all ${
-                viewMode === "outline"
+              className={`px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all ${viewMode === "outline"
                   ? "bg-white text-zinc-900 font-semibold shadow-sm"
                   : "text-zinc-600 hover:text-zinc-900"
-              }`}
+                }`}
             >
               <AlignLeft className="h-3 w-3 shrink-0" />
               <span>Outline</span>
@@ -905,10 +962,10 @@ export default function PptxRenderer({
               >
                 {viewMode === "visual"
                   ? renderVisualSlide(
-                      effectiveFullscreenWidth,
-                      true,
-                      fullscreenContainerHeight
-                    )
+                    effectiveFullscreenWidth,
+                    true,
+                    fullscreenContainerHeight
+                  )
                   : renderOutlineView()}
               </div>
             </DialogContent>

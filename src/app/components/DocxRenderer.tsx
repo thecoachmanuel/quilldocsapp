@@ -24,6 +24,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useResizeDetector } from "react-resize-detector";
+import {
+  clearPendingPageJump,
+  consumePendingPageJump,
+  peekPendingPageJump,
+} from "@/lib/page-jump";
 import { cn } from "@/lib/utils";
 
 interface DocxRendererProps {
@@ -614,19 +619,40 @@ export default function DocxRenderer({
   const fullscreenReaderContentRef = useRef<HTMLDivElement>(null);
   const blobRef = useRef<Blob | null>(null);
   const isRenderingRef = useRef<boolean>(false);
+  const pendingJumpPageRef = useRef<number | null>(null);
 
   // Listen for citation jump events from Quill AI Assistant chat
   useEffect(() => {
     const handleJump = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
-      if (detail && typeof detail.page === "number") {
+      if (!detail || typeof detail.page !== "number") return;
+      if (detail.fileId && detail.fileId !== fileId) return;
+
+      if (!isLoading && totalPages > 0) {
+        clearPendingPageJump(fileId);
         const targetPage = Math.min(Math.max(1, detail.page), totalPages);
+        setRenderMode("page");
         setCurrPage(targetPage);
+      } else {
+        pendingJumpPageRef.current = detail.page;
       }
     };
     window.addEventListener("quill:jump-to-page", handleJump);
     return () => window.removeEventListener("quill:jump-to-page", handleJump);
-  }, [totalPages]);
+  }, [isLoading, totalPages, fileId]);
+
+  // Apply deferred citation jump once DOCX pagination finishes
+  useEffect(() => {
+    if (isLoading || totalPages < 1) return;
+    const globalPending = consumePendingPageJump(fileId);
+    const pendingPage = pendingJumpPageRef.current ?? globalPending?.page ?? null;
+    if (pendingPage !== null) {
+      pendingJumpPageRef.current = null;
+      const targetPage = Math.min(Math.max(1, pendingPage), totalPages);
+      setRenderMode("page");
+      setCurrPage(targetPage);
+    }
+  }, [isLoading, totalPages, fileId]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
   useEffect(() => {
@@ -846,10 +872,13 @@ export default function DocxRenderer({
         const count = formatAndPaginateDocx(containerRef.current);
         const validCount = Math.max(1, count);
         setTotalPages(validCount);
-        setCurrPage(1);
+        const pendingTarget =
+          pendingJumpPageRef.current ?? peekPendingPageJump(fileId)?.page ?? 1;
+        const initialPage = Math.min(Math.max(1, pendingTarget), validCount);
+        setCurrPage(initialPage);
         syncActivePageAndScale(
           containerRef.current,
-          1,
+          initialPage,
           effectiveContainerWidth,
           scale,
           false

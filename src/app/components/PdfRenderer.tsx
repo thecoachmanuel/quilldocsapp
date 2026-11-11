@@ -38,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import PdfFullscreen from "./PdfFullScreen";
+import { clearPendingPageJump, consumePendingPageJump } from "@/lib/page-jump";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.js`;
 
@@ -112,10 +113,12 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
     const handleJump = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       if (!detail || typeof detail.page !== "number") return;
-      if (detail.fileId && detail.fileId !== fileId) return;
+      if (detail.fileId && fileId && detail.fileId !== fileId) return;
 
       if (numPages) {
+        clearPendingPageJump(fileId);
         const targetPage = Math.min(Math.max(1, detail.page), numPages);
+        setRenderMode("page");
         setCurrPage(targetPage);
         setValue("page", String(targetPage));
       } else {
@@ -128,16 +131,17 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
 
   // Apply deferred citation jump once PDF page count finishes loading
   useEffect(() => {
-    if (numPages && pendingJumpPageRef.current !== null) {
-      const targetPage = Math.min(
-        Math.max(1, pendingJumpPageRef.current),
-        numPages
-      );
+    if (!numPages) return;
+    const globalPending = consumePendingPageJump(fileId);
+    const pendingPage = pendingJumpPageRef.current ?? globalPending?.page ?? null;
+    if (pendingPage !== null) {
       pendingJumpPageRef.current = null;
+      const targetPage = Math.min(Math.max(1, pendingPage), numPages);
+      setRenderMode("page");
       setCurrPage(targetPage);
       setValue("page", String(targetPage));
     }
-  }, [numPages, setValue]);
+  }, [numPages, fileId, setValue]);
 
   // Keyboard shortcut Ctrl+F / Cmd+F to open in-document search
   useEffect(() => {

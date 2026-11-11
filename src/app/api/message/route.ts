@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
     const perDocResults: PerDocContextResult[] = await Promise.all(
       activeFiles.map(async (docFile: any, docIdx: number) => {
         const docNumber = docIdx + 1;
-        const parsedMeta = await parseDocument(docFile.url).catch(() => null);
+        const parsedMeta = await parseDocument(docFile.url, docFile.name).catch(() => null);
         const totalPages =
           parsedMeta?.totalPages ||
           parsedMeta?.totalSlides ||

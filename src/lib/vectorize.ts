@@ -22,7 +22,7 @@ export async function vectorizeAndIndexDocument({
     console.log(`[vectorize] Starting vectorization for file ${fileId} (${fileName})`);
 
     // 1. Parse document into text, slides, and metadata
-    const parsed = await parseDocument(fileUrl);
+    const parsed = await parseDocument(fileUrl, fileName);
     const docs: Document[] = [];
 
     if (parsed.slides && parsed.slides.length > 0) {

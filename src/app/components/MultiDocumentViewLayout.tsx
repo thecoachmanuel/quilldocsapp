@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import DocumentRenderer from "./DocumentRenderer";
 import ChatWrapper from "./chat/ChatWrapper";
+import { dispatchPageJump } from "@/lib/page-jump";
 import {
   MessageSquare,
   Maximize2,
@@ -117,15 +118,11 @@ export default function MultiDocumentViewLayout({
   useEffect(() => {
     if (initialPage && initialPage > 0) {
       const targetId = initialFocusId || activeFileId;
-      const fire = () =>
-        window.dispatchEvent(
-          new CustomEvent("quill:jump-to-page", {
-            detail: { fileId: targetId, page: initialPage, type: "page" },
-          })
-        );
-      fire();
-      const timer = setTimeout(fire, 300);
-      return () => clearTimeout(timer);
+      dispatchPageJump({ fileId: targetId, page: initialPage, type: "page" });
+      const raf = requestAnimationFrame(() =>
+        dispatchPageJump({ fileId: targetId, page: initialPage, type: "page" })
+      );
+      return () => cancelAnimationFrame(raf);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFocusId, initialPage]);
@@ -142,8 +139,21 @@ export default function MultiDocumentViewLayout({
     );
   }, [selectedFiles, activeFileId]);
 
-  // Handle jump-to-doc citations from AI messages
+  // Handle jump-to-doc and jump-to-page citations from AI messages
   useEffect(() => {
+    const revealViewer = () => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      setIsChatExpanded(false);
+      setIsMobileChatOpen(false);
+      setIsDesktopChatHidden(false);
+    };
+
+    const handleJumpToPage = () => {
+      revealViewer();
+    };
+
     const handleJumpToDoc = (e: any) => {
       const { docId, docName, page, type } = e.detail || {};
       if (!docId && !docName) return;
@@ -176,30 +186,33 @@ export default function MultiDocumentViewLayout({
       if (target) {
         const targetId = target.id;
         setActiveFileId(targetId);
+        revealViewer();
 
-        if (isMobile && !isKeyboardVisible) {
-          setIsChatExpanded(false);
-          setIsMobileChatOpen(false);
-        }
-
-        if (page) {
-          const dispatchJump = () =>
-            window.dispatchEvent(
-              new CustomEvent("quill:jump-to-page", {
-                detail: { fileId: targetId, page, type: type || "page" },
-              })
-            );
-          dispatchJump();
-          setTimeout(dispatchJump, 250);
-          setTimeout(dispatchJump, 650);
+        if (page && page > 0) {
+          dispatchPageJump({
+            fileId: targetId,
+            page,
+            type: type || "page",
+          });
+          // Also replay on next animation frame after React switches active DocumentRenderer
+          requestAnimationFrame(() =>
+            dispatchPageJump({
+              fileId: targetId,
+              page,
+              type: type || "page",
+            })
+          );
         }
       }
     };
 
+    window.addEventListener("quill:jump-to-page", handleJumpToPage);
     window.addEventListener("quill:jump-to-doc", handleJumpToDoc);
-    return () =>
+    return () => {
+      window.removeEventListener("quill:jump-to-page", handleJumpToPage);
       window.removeEventListener("quill:jump-to-doc", handleJumpToDoc);
-  }, [selectedFiles, allUserFiles, isMobile, isKeyboardVisible]);
+    };
+  }, [selectedFiles, allUserFiles]);
 
   const openManageModal = () => {
     setTempSelectedIds(selectedFiles.map((f) => f.id));

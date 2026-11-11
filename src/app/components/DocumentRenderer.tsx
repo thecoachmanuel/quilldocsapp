@@ -22,14 +22,14 @@ export default function DocumentRenderer({
       : getFileType(url);
 
   if (fileType === "docx") {
-    return <DocxRenderer fileId={fileId} url={url} fileName={fileName} />;
+    return <DocxRenderer key={fileId} fileId={fileId} url={url} fileName={fileName} />;
   }
 
   if (fileType === "pptx") {
-    return <PptxRenderer fileId={fileId} url={url} fileName={fileName} />;
+    return <PptxRenderer key={fileId} fileId={fileId} url={url} fileName={fileName} />;
   }
 
   // Default to standard PDF renderer
-  return <PdfRenderer fileId={fileId} url={url} fileName={fileName} />;
+  return <PdfRenderer key={fileId} fileId={fileId} url={url} fileName={fileName} />;
 }
 

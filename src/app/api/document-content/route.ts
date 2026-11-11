@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const parsed = await parseDocument(file.url);
+    const parsed = await parseDocument(file.url, file.name);
 
 
     return NextResponse.json({

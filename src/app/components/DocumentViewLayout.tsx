@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
+import { dispatchPageJump } from "@/lib/page-jump";
 import { cn } from "@/lib/utils";
 
 interface DocumentViewLayoutProps {
@@ -50,8 +51,25 @@ export default function DocumentViewLayout({
   const { isMobile, isKeyboardVisible, viewportHeight, offsetTop } =
     useMobileViewport();
 
-  // Handle cross-document citation clicks if the AI auto-referenced other documents
+  // Reveal viewer when jumping to a citation page/slide (closes mobile modal & desktop expanded chat)
   useEffect(() => {
+    const revealViewer = () => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      setIsChatExpanded(false);
+      setIsMobileChatOpen(false);
+      setIsDesktopChatHidden(false);
+    };
+
+    const handleJumpToPage = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail || typeof detail.page !== "number") return;
+      if (detail.fileId && detail.fileId !== fileId) return;
+      revealViewer();
+    };
+
+    // Handle cross-document citation clicks if the AI auto-referenced other documents
     const handleJumpToDoc = (e: any) => {
       const { docId, docName, page, type } = e.detail || {};
       if (!docId && !docName) return;
@@ -65,12 +83,9 @@ export default function DocumentViewLayout({
             fileName.toLowerCase().includes(lowerDoc)));
 
       if (matchesCurrent) {
+        revealViewer();
         if (page) {
-          window.dispatchEvent(
-            new CustomEvent("quill:jump-to-page", {
-              detail: { fileId, page, type: type || "page" },
-            })
-          );
+          dispatchPageJump({ fileId, page, type: type || "page" });
         }
         return;
       }
@@ -86,6 +101,9 @@ export default function DocumentViewLayout({
         );
 
       if (target && target.id !== fileId) {
+        if (page) {
+          dispatchPageJump({ fileId: target.id, page, type: type || "page" });
+        }
         const pageParam = page ? `&page=${page}` : "";
         router.push(
           `/dashboard/multi?files=${fileId},${target.id}&focus=${target.id}${pageParam}`
@@ -93,9 +111,12 @@ export default function DocumentViewLayout({
       }
     };
 
+    window.addEventListener("quill:jump-to-page", handleJumpToPage);
     window.addEventListener("quill:jump-to-doc", handleJumpToDoc);
-    return () =>
+    return () => {
+      window.removeEventListener("quill:jump-to-page", handleJumpToPage);
       window.removeEventListener("quill:jump-to-doc", handleJumpToDoc);
+    };
   }, [fileId, fileName, userFiles, router]);
 
   // On mobile when typing with virtual keypad, pin chat directly to visual viewport

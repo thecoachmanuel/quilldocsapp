@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { format } from "date-fns";
 import { forwardRef, useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
+import { dispatchPageJump } from "@/lib/page-jump";
 
 export interface DocSourceRef {
   id?: string;
@@ -85,13 +86,15 @@ function formatMessageCitations(
   // Match priority in a single left-to-right pass to prevent nested replacement:
   // 1) Compact indexed citations: [1 · p.4], [1, Page 4], [Doc 2 · s.5], (1 · p.3-4)
   // 2) Full filename citations: [Report.pdf • Page 4], [Source: Deck.pptx, Slide 2]
-  // 3) Single-doc citations: [Page 4], [Slide 2]
+  // 3) Single-doc citations: [Page 4], [Slides 2-4], (Slide 3), [s.5], Slide 4
   // 4) Bare multi-doc index citations (only when multi-doc sources exist): [1], [Doc 2]
   const combinedRegex = new RegExp(
     [
-      "(?:\\[|\\()(?:Doc(?:ument)?\\s*|D)?([0-9]{1,2})\\s*(?:•|·|\\||-|–|,|:)?\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))",
-      "(?:\\[|\\()(?:Source:\\s*)?([^\\]\\)]+?\\.(?:pdf|docx?|pptx?))\\s*(?:•|·|\\||-|–|,|:)\\s*(?:(p\\.?|pages?)|(s\\.?|slides?))\\s*([0-9]+)(?:\\s*[-–]\\s*[0-9]+)?(?:\\]|\\))",
-      "(?:\\[|\\()?(Page|Slide)s?\\s*([0-9]+)(?:\\]|\\))?",
+      "(?:\\[|\\()(?:Doc(?:ument)?\\s*|D)?([0-9]{1,2})\\s*(?:•|·|\\||-|–|,|:)?\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
+      "(?:\\[|\\()(?:Source:\\s*)?([^\\]\\)]+?\\.(?:pdf|docx?|pptx?))\\s*(?:•|·|\\||-|–|,|:)\\s*(?:(p\\.?|pages?|pp\\.?)|(s\\.?|slides?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*[0-9]+)?(?:\\]|\\))(?!\\()",
+      "(?:\\[|\\()(Page|Slide)s?\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
+      "(?:\\[|\\()(?:(s\\.?)|(p\\.?))\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?:\\]|\\))(?!\\()",
+      "\\b(Page|Slide)s?\\s*#?([0-9]+)(?:\\s*[-–]\\s*([0-9]+))?(?![\\]\\w])(?!\\s*\\()",
       "(^|[^\\w\\]])\\[(?:Doc(?:ument)?\\s*)?([1-9][0-9]?)\\](?!\\()",
     ].join("|"),
     "gi"
@@ -110,8 +113,16 @@ function formatMessageCitations(
       docPageUnit,
       docSlideUnit,
       docPageNum,
-      singleUnit,
-      singleNum,
+      bracketUnit,
+      bracketNum,
+      bracketEndNum,
+      shortSlideUnit,
+      shortPageUnit,
+      shortNum,
+      shortEndNum,
+      bareUnit,
+      barePageNum,
+      barePageEndNum,
       barePrefix,
       bareIdx
     ) => {
@@ -157,12 +168,29 @@ function formatMessageCitations(
         )}-${unit}-${docPageNum})`;
       }
 
-      // Branch 3: Single-document citation [Page 4] / [Slide 2]
+      // Branch 3A/3C: Bracketed [Slide 2-4] or bare Slide 2 / Page 4
+      const singleUnit = bracketUnit || bareUnit;
+      const singleNum = bracketNum || barePageNum;
+      const singleEnd = bracketEndNum || barePageEndNum;
       if (singleUnit && singleNum) {
+        const unitLower = singleUnit.toLowerCase();
         const unitTitle =
-          singleUnit.charAt(0).toUpperCase() +
-          singleUnit.slice(1).toLowerCase();
-        return `[${unitTitle} ${singleNum}](#jump-${singleUnit.toLowerCase()}-${singleNum})`;
+          unitLower.charAt(0).toUpperCase() + unitLower.slice(1);
+        const label = singleEnd
+          ? `${unitTitle}s ${singleNum}–${singleEnd}`
+          : `${unitTitle} ${singleNum}`;
+        return `[${label}](#jump-${unitLower}-${singleNum})`;
+      }
+
+      // Branch 3B: Bracketed shorthand [s.5] / [p.3-4]
+      if ((shortSlideUnit || shortPageUnit) && shortNum) {
+        const isSlide = Boolean(shortSlideUnit);
+        const unit = isSlide ? "slide" : "page";
+        const displayUnit = isSlide ? "Slide" : "Page";
+        const label = shortEndNum
+          ? `${displayUnit}s ${shortNum}–${shortEndNum}`
+          : `${displayUnit} ${shortNum}`;
+        return `[${label}](#jump-${unit}-${shortNum})`;
       }
 
       // Branch 4: Bare multi-doc reference [1] / [Doc 2]
@@ -377,12 +405,34 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!isNaN(num)) {
-                              window.dispatchEvent(
-                                new CustomEvent("quill:jump-to-page", {
-                                  detail: { page: num, type },
-                                })
-                              );
+                            if (!isNaN(num) && num > 0) {
+                              if (effectiveSources.length > 1 && type === "slide") {
+                                const pptxSources = effectiveSources.filter((s) =>
+                                  /\.(pptx?|PPTX?)$/i.test(s.name || "")
+                                );
+                                if (pptxSources.length === 1) {
+                                  window.dispatchEvent(
+                                    new CustomEvent("quill:jump-to-doc", {
+                                      detail: {
+                                        docId: pptxSources[0].id || undefined,
+                                        docName: pptxSources[0].name,
+                                        page: num,
+                                        type,
+                                      },
+                                    })
+                                  );
+                                  return;
+                                }
+                              }
+                              const singleTargetId =
+                                effectiveSources.length === 1 && effectiveSources[0]?.id
+                                  ? effectiveSources[0].id
+                                  : undefined;
+                              dispatchPageJump({
+                                fileId: singleTargetId,
+                                page: num,
+                                type,
+                              });
                             }
                           }}
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 select-none"

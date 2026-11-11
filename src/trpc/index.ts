@@ -11,9 +11,11 @@ import { db } from "@/db";
 import z from "zod";
 import { INFINITE_QUERY_LIMIT } from "@/config/infinite-query";
 import { absoluteUrl } from "@/lib/utils";
+import { headers } from "next/headers";
 import {
   getUserSubscriptionPlan,
   getDynamicPlans,
+  isStripeConfigured,
   stripe,
 } from "@/lib/stripe";
 import {
@@ -28,6 +30,34 @@ import { isAiConfigured } from "@/lib/ai";
 import { deleteDocumentBuffer } from "@/lib/document-storage";
 import fs from "fs";
 import path from "path";
+
+function resolveAppUrl(appPath: string): string {
+  try {
+    const reqHeaders = headers();
+    const forwardedHost = reqHeaders
+      .get("x-forwarded-host")
+      ?.split(",")[0]
+      ?.trim();
+    const host = forwardedHost || reqHeaders.get("host")?.trim();
+    const forwardedProto = reqHeaders
+      .get("x-forwarded-proto")
+      ?.split(",")[0]
+      ?.trim();
+
+    if (host) {
+      const proto =
+        forwardedProto ||
+        (host.startsWith("localhost") || host.startsWith("127.0.0.1")
+          ? "http"
+          : "https");
+      return `${proto}://${host}${appPath}`;
+    }
+  } catch {
+    // Fallback cleanly outside an active HTTP request context
+  }
+
+  return absoluteUrl(appPath);
+}
 
 export const appRouter = router({
   authCallback: publicProcedure.query(async () => {
@@ -68,7 +98,7 @@ export const appRouter = router({
   createStripeSession: privateProcedure.mutation(async ({ ctx }) => {
     const { userId } = ctx;
 
-    const billingUrl = absoluteUrl("/dashboard/billing");
+    const billingUrl = resolveAppUrl("/dashboard/billing");
 
     if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
@@ -87,42 +117,42 @@ export const appRouter = router({
       dynamicPlans.find((p) => p.price.amount > 0) ||
       dynamicPlans[0];
 
-    const isStripeConfigured = Boolean(
-      process.env.STRIPE_SECRET_KEY &&
-        process.env.STRIPE_SECRET_KEY.startsWith("sk_") &&
-        !process.env.STRIPE_SECRET_KEY.includes("<your")
-    );
-
-    // 1. Paystack Gateway (Prioritized: NGN Cards, Bank Transfer, USSD, OPay & International USD/GBP Cards)
+    // 1. Paystack Gateway (Primary — strictly used whenever Paystack is configured)
     if (isPaystackConfigured()) {
+      if (subscriptionPlan.isSubscribed) {
+        return { url: `${billingUrl}?status=active` };
+      }
+
+      const dynamicKobo =
+        proPlan?.price.amountNgn && proPlan.price.amountNgn > 0
+          ? Math.round(proPlan.price.amountNgn * 100)
+          : PAYSTACK_PRO_AMOUNT_KOBO;
+
       try {
-        if (!subscriptionPlan.isSubscribed) {
-          const dynamicKobo =
-            proPlan?.price.amountNgn && proPlan.price.amountNgn > 0
-              ? Math.round(proPlan.price.amountNgn * 100)
-              : PAYSTACK_PRO_AMOUNT_KOBO;
+        const paystackSession = await initializePaystackTransaction({
+          email: dbUser.email,
+          userId: userId,
+          amountKobo: dynamicKobo,
+          callbackUrl: billingUrl,
+        });
 
-          const paystackSession = await initializePaystackTransaction({
-            email: dbUser.email,
-            userId: userId,
-            amountKobo: dynamicKobo,
-            callbackUrl: billingUrl,
-          });
-
-          return { url: paystackSession.authorization_url };
-        } else {
-          return { url: `${billingUrl}?status=active` };
-        }
+        return { url: paystackSession.authorization_url };
       } catch (paystackErr: any) {
-        console.warn(
-          "Paystack initialization failed, checking secondary gateway:",
-          paystackErr.message
+        console.error(
+          "[createStripeSession] Paystack initialization failed:",
+          paystackErr?.message || paystackErr
         );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            paystackErr?.message ||
+            "Unable to start Paystack payment. Please verify your Paystack configuration and try again.",
+        });
       }
     }
 
-    // 2. Stripe Gateway (Secondary fallback if configured)
-    if (isStripeConfigured) {
+    // 2. Stripe Gateway (ONLY used as fallback when Paystack is NOT configured)
+    if (isStripeConfigured()) {
       try {
         if (subscriptionPlan.isSubscribed && dbUser.stripeCustomerId) {
           const stripeSession = await stripe.billingPortal.sessions.create({
@@ -136,12 +166,20 @@ export const appRouter = router({
         const proPriceId =
           proPlan?.price.priceIds.test || proPlan?.price.priceIds.production;
 
+        if (!proPriceId) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Stripe price ID is not configured for the Pro plan.",
+          });
+        }
+
         const stripeSession = await stripe.checkout.sessions.create({
           success_url: billingUrl,
           cancel_url: billingUrl,
           payment_method_types: ["card"],
           mode: "subscription",
           billing_address_collection: "auto",
+          customer_email: dbUser.email,
           line_items: [
             {
               price: proPriceId,
@@ -155,14 +193,30 @@ export const appRouter = router({
 
         return { url: stripeSession.url };
       } catch (stripeErr: any) {
-        console.warn(
-          "Stripe API failed, falling back to instant activation:",
-          stripeErr.message
+        if (stripeErr instanceof TRPCError) throw stripeErr;
+        console.error(
+          "[createStripeSession] Stripe session creation failed:",
+          stripeErr?.message || stripeErr
         );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            stripeErr?.message || "Failed to initialize Stripe checkout.",
+        });
       }
     }
 
-    // 3. Seamless Dev / Testing Mode: Activate or toggle Pro plan directly
+    // 3. Local Dev Simulation ONLY when neither Paystack nor Stripe is configured
+    const isProductionEnv =
+      process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+    if (isProductionEnv) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message:
+          "No payment gateway is configured. Please configure PAYSTACK_SECRET_KEY (or STRIPE_SECRET_KEY fallback).",
+      });
+    }
+
     const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     if (subscriptionPlan.isSubscribed) {
@@ -195,7 +249,11 @@ export const appRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { userId } = ctx;
       if (!isPaystackConfigured()) {
-        return { success: false, reason: "not_configured" };
+        return {
+          success: false as const,
+          reason: "not_configured",
+          message: "Paystack is not configured on this server.",
+        };
       }
 
       try {
@@ -217,13 +275,32 @@ export const appRouter = router({
               input.reference,
               txData.customer?.customer_code
             );
-            return { success: true, verified: true };
+            return { success: true as const, verified: true };
           }
+
+          return {
+            success: false as const,
+            reason: "user_mismatch",
+            message: "Payment reference does not belong to your account.",
+          };
         }
-        return { success: false, reason: "verification_unmatched" };
+        return {
+          success: false as const,
+          reason: String(txData?.status || "unpaid"),
+          message:
+            String(
+              txData?.gateway_response ||
+                `Payment status: ${txData?.status || "incomplete"}`
+            ),
+        };
       } catch (err: any) {
         console.warn("[verifyPaystackPayment] error:", err.message);
-        return { success: false, error: err.message };
+        return {
+          success: false as const,
+          reason: "error",
+          error: String(err?.message || "Verification failed"),
+          message: String(err?.message || "Verification failed"),
+        };
       }
     }),
 

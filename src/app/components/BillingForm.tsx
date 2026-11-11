@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface BillingFormProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
@@ -27,6 +27,7 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isVerifying, setIsVerifying] = useState(false);
+  const verifiedRef = useRef<string | null>(null);
 
   const { mutate: verifyPayment } = trpc.verifyPaystackPayment.useMutation({
     onSuccess: (data) => {
@@ -39,21 +40,32 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
         window.history.replaceState({}, "", "/dashboard/billing?upgraded=true");
         router.refresh();
       } else {
+        window.history.replaceState({}, "", "/dashboard/billing");
         toast({
-          title: "Payment Received",
-          description: "Your subscription is processing and will activate shortly.",
+          title: "Payment not completed",
+          description:
+            data.message ||
+            "Your payment could not be verified yet. Please try again if no debit occurred.",
+          variant: "destructive",
         });
       }
     },
     onError: (err) => {
       setIsVerifying(false);
-      console.warn("Paystack payment verification notice:", err.message);
+      window.history.replaceState({}, "", "/dashboard/billing");
+      toast({
+        title: "Payment verification failed",
+        description:
+          err.message || "Could not verify Paystack payment reference.",
+        variant: "destructive",
+      });
     },
   });
 
   useEffect(() => {
     const ref = searchParams.get("reference") || searchParams.get("trxref");
-    if (ref && !subscriptionPlan.isSubscribed) {
+    if (ref && !subscriptionPlan.isSubscribed && verifiedRef.current !== ref) {
+      verifiedRef.current = ref;
       setIsVerifying(true);
       verifyPayment({ reference: ref });
     } else if (searchParams.get("upgraded") === "true") {
@@ -85,6 +97,14 @@ const BillingForm = ({ subscriptionPlan }: BillingFormProps) => {
             variant: "destructive",
           });
         }
+      },
+      onError: (err) => {
+        toast({
+          title: "Checkout initialization failed",
+          description:
+            err.message || "Unable to start Paystack payment. Please try again.",
+          variant: "destructive",
+        });
       },
     });
 

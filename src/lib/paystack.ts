@@ -1,22 +1,25 @@
 import crypto from "crypto";
 import { db } from "@/db";
 
+function cleanEnv(value?: string): string {
+  return value ? value.replace(/^['"]|['"]$/g, "").trim() : "";
+}
+
 export function isPaystackConfigured(): boolean {
-  const key = process.env.PAYSTACK_SECRET_KEY;
+  const key = cleanEnv(process.env.PAYSTACK_SECRET_KEY);
   return Boolean(
     key &&
-      key.trim() !== "" &&
       (key.startsWith("sk_test_") || key.startsWith("sk_live_")) &&
       !key.includes("<your")
   );
 }
 
 export function getPaystackSecretKey(): string {
-  return process.env.PAYSTACK_SECRET_KEY?.trim() || "";
+  return cleanEnv(process.env.PAYSTACK_SECRET_KEY);
 }
 
 export function getPaystackPublicKey(): string {
-  return process.env.PAYSTACK_PUBLIC_KEY?.trim() || "";
+  return cleanEnv(process.env.PAYSTACK_PUBLIC_KEY);
 }
 
 /**
@@ -47,7 +50,12 @@ export async function initializePaystackTransaction(
     throw new Error("Paystack secret key is not configured.");
   }
 
-  const amount = params.amountKobo || PAYSTACK_PRO_AMOUNT_KOBO;
+  const amount = Math.round(params.amountKobo || PAYSTACK_PRO_AMOUNT_KOBO);
+  const email = params.email?.trim();
+
+  if (!email) {
+    throw new Error("A valid user email is required to initialize Paystack checkout.");
+  }
 
   const res = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
@@ -56,8 +64,8 @@ export async function initializePaystackTransaction(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email: params.email,
-      amount: amount,
+      email,
+      amount,
       currency: "NGN",
       callback_url: params.callbackUrl,
       metadata: {
@@ -76,23 +84,19 @@ export async function initializePaystackTransaction(
           },
         ],
       },
-      channels: [
-        "card",
-        "bank",
-        "ussd",
-        "qr",
-        "mobile_money",
-        "bank_transfer",
-        "eft",
-      ],
     }),
   });
 
-  const data = await res.json();
-  if (!res.ok || !data.status) {
-    throw new Error(
-      data.message || "Failed to initialize Paystack transaction."
-    );
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.status || !data?.data?.authorization_url) {
+    const baseMsg =
+      data?.message || `Paystack initialization failed (HTTP ${res.status}).`;
+    if (res.status === 401) {
+      throw new Error(
+        `Paystack rejected PAYSTACK_SECRET_KEY (${baseMsg}). Check your live/test secret key in environment variables.`
+      );
+    }
+    throw new Error(baseMsg);
   }
 
   return {
@@ -123,9 +127,11 @@ export async function verifyPaystackTransaction(reference: string) {
     }
   );
 
-  const data = await res.json();
-  if (!res.ok || !data.status) {
-    throw new Error(data.message || "Failed to verify Paystack transaction.");
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.status) {
+    throw new Error(
+      data?.message || `Failed to verify Paystack transaction (HTTP ${res.status}).`
+    );
   }
 
   return data.data;
@@ -166,6 +172,15 @@ export async function grantUserProAccess(
     return null;
   }
 
+  const normalizedSubId = reference.startsWith("paystack_")
+    ? reference
+    : `paystack_${reference}`;
+
+  // Prevent double-crediting 30 days if both callback verification and webhook fire for the same reference
+  if (existingUser.stripeSubscriptionId === normalizedSubId) {
+    return existingUser;
+  }
+
   const currentEnd =
     existingUser.stripeCurrentPeriodEnd &&
     new Date(existingUser.stripeCurrentPeriodEnd).getTime() > Date.now()
@@ -178,9 +193,7 @@ export async function grantUserProAccess(
     where: { id: userId },
     data: {
       stripePriceId: "pro",
-      stripeSubscriptionId: reference.startsWith("paystack_")
-        ? reference
-        : `paystack_${reference}`,
+      stripeSubscriptionId: normalizedSubId,
       stripeCustomerId:
         customerCode ||
         existingUser.stripeCustomerId ||

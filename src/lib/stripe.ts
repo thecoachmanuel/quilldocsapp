@@ -1,9 +1,23 @@
 import { PLANS } from "@/config/stripe";
 import { db, DEFAULT_PLAN_CONFIGS } from "@/db";
 import { getKindeServerSession } from "@/lib/kinde";
+import { isPaystackConfigured } from "@/lib/paystack";
 import Stripe from "stripe";
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", {
+function cleanStripeEnv(val?: string): string {
+  return val ? val.replace(/^['"]|['"]$/g, "").trim() : "";
+}
+
+export function isStripeConfigured(): boolean {
+  const key = cleanStripeEnv(process.env.STRIPE_SECRET_KEY);
+  return Boolean(
+    key &&
+      (key.startsWith("sk_test_") || key.startsWith("sk_live_")) &&
+      !key.includes("<your")
+  );
+}
+
+export const stripe = new Stripe(cleanStripeEnv(process.env.STRIPE_SECRET_KEY), {
   apiVersion: "2023-08-16",
   typescript: true,
 });
@@ -145,8 +159,19 @@ export async function getUserSubscriptionPlan() {
     ? new Date(dbUser.stripeCurrentPeriodEnd)
     : null;
 
+  const isSimulatedSub = Boolean(
+    dbUser.stripeSubscriptionId?.startsWith("sub_test_")
+  );
+  const ignoreSimulatedSub =
+    isSimulatedSub &&
+    (isPaystackConfigured() ||
+      isStripeConfigured() ||
+      process.env.VERCEL === "1" ||
+      process.env.NODE_ENV === "production");
+
   const isSubscribed = Boolean(
-    dbUser.stripePriceId &&
+    !ignoreSimulatedSub &&
+      dbUser.stripePriceId &&
       periodEnd &&
       periodEnd.getTime() + 86_400_000 > Date.now()
   );
@@ -165,7 +190,8 @@ export async function getUserSubscriptionPlan() {
   if (
     isSubscribed &&
     dbUser.stripeSubscriptionId &&
-    process.env.STRIPE_SECRET_KEY &&
+    isStripeConfigured() &&
+    !dbUser.stripeSubscriptionId.startsWith("paystack_") &&
     !dbUser.stripeSubscriptionId.startsWith("sub_test_") &&
     !dbUser.stripeSubscriptionId.startsWith("sub_admin_")
   ) {

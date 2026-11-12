@@ -28,20 +28,57 @@ export function getPaystackPublicKey(): string {
 export const PAYSTACK_PRO_AMOUNT_KOBO =
   Number(process.env.PAYSTACK_PRO_AMOUNT_KOBO) || 1800000;
 
+/**
+ * Standard monthly Pro plan price in USD cents (Default: $14 = 1,400 cents)
+ */
+export const PAYSTACK_PRO_AMOUNT_USD_CENTS =
+  Number(process.env.PAYSTACK_PRO_AMOUNT_USD_CENTS) || 1400;
+
+export type PaystackCurrency = "NGN" | "USD";
+
 export interface InitializePaystackParams {
   email: string;
+  amountSubunits?: number;
   amountKobo?: number;
+  fallbackAmountKobo?: number;
+  currency?: PaystackCurrency;
   callbackUrl: string;
   userId: string;
   planSlug?: string;
   planName?: string;
 }
 
+async function requestPaystackInitialize(
+  secretKey: string,
+  payload: Record<string, unknown>
+) {
+  const res = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json().catch(() => null);
+  return { res, data };
+}
+
+function buildPaystackInitError(status: number, message?: string): Error {
+  const baseMsg = message || `Paystack initialization failed (HTTP ${status}).`;
+  if (status === 401) {
+    return new Error(
+      `Paystack rejected PAYSTACK_SECRET_KEY (${baseMsg}). Check your live/test secret key in environment variables.`
+    );
+  }
+  return new Error(baseMsg);
+}
+
 /**
- * Initializes a checkout session with Paystack.
- * Directly supports NGN cards (Mastercard, Visa, Verve), Bank Transfers,
- * USSD, OPay, and International cards (USD, GBP, EUR Visa/Mastercard/Apple Pay)
- * with automatic FX conversion settling into standard Nigerian bank accounts.
+ * Initializes a checkout session with Paystack in NGN or USD (when enabled on Paystack).
+ * Supports Nigerian local methods in NGN and international cards / Apple Pay in USD,
+ * falling back to NGN international card checkout only if USD currency is rejected by the key.
  */
 export async function initializePaystackTransaction(
   params: InitializePaystackParams
@@ -51,59 +88,86 @@ export async function initializePaystackTransaction(
     throw new Error("Paystack secret key is not configured.");
   }
 
-  const amount = Math.round(params.amountKobo || PAYSTACK_PRO_AMOUNT_KOBO);
   const email = params.email?.trim();
-
   if (!email) {
     throw new Error("A valid user email is required to initialize Paystack checkout.");
   }
 
-  const res = await fetch("https://api.paystack.co/transaction/initialize", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const requestedCurrency: PaystackCurrency =
+    params.currency === "USD" ? "USD" : "NGN";
+  const primaryAmount = Math.round(
+    params.amountSubunits ??
+      params.amountKobo ??
+      (requestedCurrency === "USD"
+        ? PAYSTACK_PRO_AMOUNT_USD_CENTS
+        : PAYSTACK_PRO_AMOUNT_KOBO)
+  );
+
+  const baseMetadata = {
+    userId: params.userId,
+    planSlug: params.planSlug || "pro",
+    billingCurrency: requestedCurrency,
+    custom_fields: [
+      {
+        display_name: "Plan",
+        variable_name: "plan",
+        value: `QuillDocs ${params.planName || "Pro"} (Monthly)`,
+      },
+      {
+        display_name: "User ID",
+        variable_name: "user_id",
+        value: params.userId,
+      },
+    ],
+  };
+
+  let { res, data } = await requestPaystackInitialize(secretKey, {
+    email,
+    amount: primaryAmount,
+    currency: requestedCurrency,
+    callback_url: params.callbackUrl,
+    metadata: baseMetadata,
+  });
+
+  const msgText = String(data?.message || "");
+  const isCurrencyRejection =
+    (!res.ok || !data?.status) &&
+    requestedCurrency === "USD" &&
+    Boolean(params.fallbackAmountKobo && params.fallbackAmountKobo > 0) &&
+    (res.status === 400 ||
+      /currency|not supported|invalid currency|merchant/i.test(msgText));
+
+  let settledCurrency: PaystackCurrency = requestedCurrency;
+
+  if (isCurrencyRejection) {
+    console.warn(
+      `[paystack] USD currency rejected by Paystack (${msgText}); retrying international checkout in NGN.`
+    );
+    settledCurrency = "NGN";
+    const fallbackRes = await requestPaystackInitialize(secretKey, {
       email,
-      amount,
+      amount: Math.round(params.fallbackAmountKobo!),
       currency: "NGN",
       callback_url: params.callbackUrl,
       metadata: {
-        userId: params.userId,
-        planSlug: params.planSlug || "pro",
-        custom_fields: [
-          {
-            display_name: "Plan",
-            variable_name: "plan",
-            value: `QuillDocs ${params.planName || "Pro"} (Monthly)`,
-          },
-          {
-            display_name: "User ID",
-            variable_name: "user_id",
-            value: params.userId,
-          },
-        ],
+        ...baseMetadata,
+        billingCurrency: "NGN",
+        requestedCurrency: "USD",
       },
-    }),
-  });
+    });
+    res = fallbackRes.res;
+    data = fallbackRes.data;
+  }
 
-  const data = await res.json().catch(() => null);
   if (!res.ok || !data?.status || !data?.data?.authorization_url) {
-    const baseMsg =
-      data?.message || `Paystack initialization failed (HTTP ${res.status}).`;
-    if (res.status === 401) {
-      throw new Error(
-        `Paystack rejected PAYSTACK_SECRET_KEY (${baseMsg}). Check your live/test secret key in environment variables.`
-      );
-    }
-    throw new Error(baseMsg);
+    throw buildPaystackInitError(res.status, data?.message);
   }
 
   return {
     authorization_url: data.data.authorization_url as string,
     access_code: data.data.access_code as string,
     reference: data.data.reference as string,
+    currency: settledCurrency,
   };
 }
 

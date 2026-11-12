@@ -7,6 +7,8 @@ import type { DynamicPlan } from "@/lib/subscription";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
+import { useVisitorCurrency } from "@/hooks/useVisitorCurrency";
+import { formatCurrencyAmount } from "@/lib/currency";
 
 export type LimitType = "quota" | "fileSize" | "pages" | "generic";
 
@@ -104,6 +106,7 @@ export default function LimitUpgradePrompt({
   className,
 }: LimitUpgradePromptProps) {
   const { toast } = useToast();
+  const { currency } = useVisitorCurrency();
 
   const { data: livePlans, isLoading: isLoadingPlans } =
     trpc.getPublicPlans.useQuery(undefined, {
@@ -143,13 +146,18 @@ export default function LimitUpgradePrompt({
     });
 
   const handleUpgrade = () => {
-    createPaystackSession(
-      targetPlan?.slug ? { planSlug: targetPlan.slug } : undefined
-    );
+    createPaystackSession({
+      ...(targetPlan?.slug ? { planSlug: targetPlan.slug } : {}),
+      currency,
+    });
   };
 
   const priceNgn = targetPlan?.price?.amountNgn ?? 18000;
   const priceUsd = targetPlan?.price?.amount ?? 14;
+  const formattedPrimaryPrice = formatCurrencyAmount(
+    currency === "USD" ? priceUsd : priceNgn,
+    currency
+  );
   const displayFeatures = (targetPlan?.features || []).slice(0, 3);
 
   if (variant === "banner") {
@@ -173,7 +181,7 @@ export default function LimitUpgradePrompt({
                   {reasonTitle}
                 </h3>
                 <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
-                  {targetPlan.name} &bull; ₦{priceNgn.toLocaleString()}/mo
+                  {targetPlan.name} &bull; {formattedPrimaryPrice}/mo
                 </span>
               </div>
               <p className="mt-1 text-xs sm:text-sm text-zinc-600 leading-relaxed">
@@ -183,7 +191,9 @@ export default function LimitUpgradePrompt({
                   {targetPlan.pagesPerPdf.toLocaleString()} pages/file, and{" "}
                   {targetPlan.maxFileSizeMB}MB uploads
                 </span>{" "}
-                (~${priceUsd} USD/mo).
+                ({currency === "USD"
+                  ? `${formatCurrencyAmount(priceUsd, "USD")} USD/mo`
+                  : `~${formatCurrencyAmount(priceUsd, "USD")} USD/mo`}).
               </p>
             </div>
           </div>
@@ -261,11 +271,13 @@ export default function LimitUpgradePrompt({
             </div>
             <div className="text-right shrink-0">
               <div className="text-lg font-bold text-zinc-900 leading-tight">
-                ₦{priceNgn.toLocaleString()}
+                {formattedPrimaryPrice}
                 <span className="text-xs font-medium text-zinc-500">/mo</span>
               </div>
               <div className="text-[11px] text-zinc-500">
-                ~ ${priceUsd} USD/mo
+                {currency === "USD"
+                  ? "Billed in USD"
+                  : `~ ${formatCurrencyAmount(priceUsd, "USD")} USD/mo`}
               </div>
             </div>
           </div>
@@ -365,8 +377,7 @@ export default function LimitUpgradePrompt({
               ) : (
                 <>
                   <span>
-                    Upgrade to {targetPlan.name} &mdash; ₦
-                    {priceNgn.toLocaleString()}/mo
+                    Upgrade to {targetPlan.name} &mdash; {formattedPrimaryPrice}/mo
                   </span>
                   <ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
                 </>

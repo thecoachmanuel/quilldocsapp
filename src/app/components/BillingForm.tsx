@@ -33,21 +33,37 @@ import {
 import { Button } from "@/components/ui/button";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { CurrencyToggle } from "@/components/CurrencyToggle";
+import { useVisitorCurrency } from "@/hooks/useVisitorCurrency";
+import {
+  BillingCurrency,
+  CurrencyResolutionSource,
+  formatCurrencyAmount,
+} from "@/lib/currency";
 
 interface BillingFormProps {
   subscriptionPlan: Awaited<ReturnType<typeof getUserSubscriptionPlan>>;
   plans?: DynamicPlan[];
   billingGateway?: "paystack" | "none";
+  initialCurrency?: BillingCurrency;
+  initialSource?: CurrencyResolutionSource;
 }
 
 const BillingForm = ({
   subscriptionPlan,
   plans = [],
   billingGateway = "paystack",
+  initialCurrency,
+  initialSource,
 }: BillingFormProps) => {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { currency, setCurrency } = useVisitorCurrency({
+    initialCurrency,
+    initialSource,
+    skipQuery: Boolean(initialCurrency),
+  });
   const [isVerifying, setIsVerifying] = useState(false);
   const [isManageOpen, setIsManageOpen] = useState(false);
   const [confirmDowngrade, setConfirmDowngrade] = useState(false);
@@ -197,6 +213,10 @@ const BillingForm = ({
       upgradePlan?.price?.amount ??
       14
     : upgradePlan?.price?.amount ?? 14;
+  const formattedPrimaryPrice = formatCurrencyAmount(
+    currency === "USD" ? displayPriceUsd : displayPriceNgn,
+    currency
+  );
 
   const currentFeatures = buildPlanDisplayFeatures(livePlan);
   const proFeatures = upgradePlan ? buildPlanDisplayFeatures(upgradePlan) : [];
@@ -219,7 +239,7 @@ const BillingForm = ({
             setConfirmDowngrade(false);
             setIsManageOpen(true);
           } else {
-            createPaystackSession({ planSlug: upgradePlan?.slug });
+            createPaystackSession({ planSlug: upgradePlan?.slug, currency });
           }
         }}
       >
@@ -281,15 +301,20 @@ const BillingForm = ({
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold text-zinc-900">
-                      ₦{displayPriceNgn.toLocaleString()}
+                      {formattedPrimaryPrice}
                     </span>
                     <span className="text-xs text-zinc-500 font-medium">
-                      / month (~ ${displayPriceUsd} USD billed in NGN)
+                      {currency === "USD"
+                        ? "/ month (billed in USD)"
+                        : `/ month (~ ${formatCurrencyAmount(displayPriceUsd, "USD")} USD)`}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1 text-xs text-emerald-700 font-medium bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    Secure Paystack Checkout
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <CurrencyToggle currency={currency} onChange={setCurrency} />
+                    <div className="flex items-center gap-1 text-xs text-emerald-700 font-medium bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      Secure Paystack Checkout
+                    </div>
                   </div>
                 </div>
 
@@ -322,7 +347,7 @@ const BillingForm = ({
                 ? "Verifying Payment..."
                 : isPro
                   ? "Manage Subscription"
-                  : `Upgrade to ${upgradePlan?.name || "Pro"} (₦${displayPriceNgn.toLocaleString()} / mo)`}
+                  : `Upgrade to ${upgradePlan?.name || "Pro"} (${formattedPrimaryPrice} / mo)`}
             </Button>
 
             {subscriptionPlan.isSubscribed ? (
@@ -423,7 +448,13 @@ const BillingForm = ({
                   <Button
                     type="button"
                     disabled={isLoading || isCanceling}
-                    onClick={() => createPaystackSession({ renew: true, planSlug: livePlan.slug })}
+                    onClick={() =>
+                      createPaystackSession({
+                        renew: true,
+                        planSlug: livePlan.slug,
+                        currency,
+                      })
+                    }
                     className="w-full gap-2"
                   >
                     {isLoading ? (
@@ -431,7 +462,7 @@ const BillingForm = ({
                     ) : (
                       <CreditCard className="h-4 w-4" />
                     )}
-                    Extend / Renew +30 Days (₦{displayPriceNgn.toLocaleString()})
+                    Extend / Renew +30 Days ({formattedPrimaryPrice})
                   </Button>
                 )}
               </div>

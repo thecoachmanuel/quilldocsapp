@@ -25,7 +25,9 @@ import {
   verifyPaystackTransaction,
   grantUserProAccess,
   PAYSTACK_PRO_AMOUNT_KOBO,
+  PAYSTACK_PRO_AMOUNT_USD_CENTS,
 } from "@/lib/paystack";
+import { getServerGeoCurrency } from "@/lib/geo-currency";
 import { pinecone, isPineconeConfigured } from "@/lib/pinecone";
 import { isAiConfigured } from "@/lib/ai";
 import { deleteDocumentBuffer } from "@/lib/document-storage";
@@ -109,12 +111,17 @@ export const appRouter = router({
     });
   }),
 
+  getVisitorRegion: publicProcedure.query(() => {
+    return getServerGeoCurrency();
+  }),
+
   createPaystackSession: privateProcedure
     .input(
       z
         .object({
           renew: z.boolean().optional(),
           planSlug: z.string().optional(),
+          currency: z.enum(["USD", "NGN"]).optional(),
         })
         .optional()
     )
@@ -157,16 +164,27 @@ export const appRouter = router({
         return { url: `${billingUrl}?status=active` };
       }
 
-      const dynamicKobo =
-        targetPaidPlan?.price.amountNgn && targetPaidPlan.price.amountNgn > 0
-          ? Math.round(targetPaidPlan.price.amountNgn * 100)
-          : PAYSTACK_PRO_AMOUNT_KOBO;
+      const serverGeo = getServerGeoCurrency();
+      const targetCurrency = input?.currency ?? serverGeo.currency;
+      const usdPrice = targetPaidPlan?.price.amount ?? 0;
+      const ngnPrice = targetPaidPlan?.price.amountNgn ?? 0;
+      const ngnKobo =
+        ngnPrice > 0 ? Math.round(ngnPrice * 100) : PAYSTACK_PRO_AMOUNT_KOBO;
+
+      const useUsd = targetCurrency === "USD" && (usdPrice > 0 || ngnPrice <= 0);
+      const amountSubunits = useUsd
+        ? usdPrice > 0
+          ? Math.round(usdPrice * 100)
+          : PAYSTACK_PRO_AMOUNT_USD_CENTS
+        : ngnKobo;
 
       try {
         const paystackSession = await initializePaystackTransaction({
           email: dbUser.email,
           userId: userId,
-          amountKobo: dynamicKobo,
+          currency: useUsd ? "USD" : "NGN",
+          amountSubunits,
+          fallbackAmountKobo: ngnKobo,
           callbackUrl: billingUrl,
           planSlug: targetPaidPlan?.slug || "pro",
           planName: targetPaidPlan?.name || "Pro",

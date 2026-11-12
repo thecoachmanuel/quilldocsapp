@@ -11,6 +11,11 @@ import {
 import { cn } from "@/lib/utils";
 import { getKindeServerSession, RegisterLink } from "@/lib/kinde";
 import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
+import { getServerGeoCurrency } from "@/lib/geo-currency";
+import {
+  PricingCurrencyBar,
+  PlanPriceDisplay,
+} from "@/components/PricingCurrencyClient";
 
 import { ArrowRight, Check, HelpCircle } from "lucide-react";
 import Link from "next/link";
@@ -25,6 +30,7 @@ async function Page() {
     getUserSubscriptionPlan(),
     getDynamicPlans(),
   ]);
+  const geo = getServerGeoCurrency();
 
   return (
     <>
@@ -35,6 +41,10 @@ async function Page() {
             Whether you&apos;re just trying out our service or need more,
             we&apos;ve got you covered.
           </p>
+          <PricingCurrencyBar
+            initialCurrency={geo.currency}
+            initialSource={geo.source}
+          />
         </div>
 
         <div
@@ -82,31 +92,13 @@ async function Page() {
                         {planItem.name}
                       </h3>
                       <p className="text-gray-500 text-sm">{planItem.tagline}</p>
-                      <div className="my-5 flex flex-col items-center">
-                        <div className="flex items-baseline justify-center gap-1">
-                          <span className="font-display text-5xl sm:text-6xl font-bold tracking-tight">
-                            {isFree
-                              ? "Free"
-                              : `₦${(
-                                  planItem.price?.amountNgn ?? 18000
-                                ).toLocaleString()}`}
-                          </span>
-                          {!isFree && (
-                            <span className="text-gray-500 font-medium text-lg">
-                              /mo
-                            </span>
-                          )}
-                        </div>
-                        {!isFree ? (
-                          <span className="text-xs font-medium text-zinc-500 mt-1">
-                            (~ ${price} USD)
-                          </span>
-                        ) : (
-                          <span className="text-xs font-medium text-zinc-500 mt-1">
-                            $0 USD &bull; Free forever
-                          </span>
-                        )}
-                      </div>
+                      <PlanPriceDisplay
+                        isFree={isFree}
+                        priceUsd={price}
+                        priceNgn={planItem.price?.amountNgn ?? 18000}
+                        initialCurrency={geo.currency}
+                        initialSource={geo.source}
+                      />
                     </div>
 
                     <div className="flex h-20 items-center justify-center border-b border-t border-gray-200 bg-gray-50">
@@ -186,6 +178,8 @@ async function Page() {
                           <UpgradeButton
                             planSlug={planItem.slug}
                             planName={planItem.name}
+                            initialCurrency={geo.currency}
+                            initialSource={geo.source}
                           />
                         )
                       ) : (

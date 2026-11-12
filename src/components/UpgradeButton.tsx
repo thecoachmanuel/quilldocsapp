@@ -4,15 +4,26 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { trpc } from "@/app/_trpc/client";
 import { useToast } from "./ui/use-toast";
+import { useVisitorCurrency } from "@/hooks/useVisitorCurrency";
+import { BillingCurrency, CurrencyResolutionSource } from "@/lib/currency";
 
 function UpgradeButton({
   planSlug,
   planName,
+  initialCurrency,
+  initialSource,
 }: {
   planSlug?: string;
   planName?: string;
+  initialCurrency?: BillingCurrency;
+  initialSource?: CurrencyResolutionSource;
 } = {}) {
   const { toast } = useToast();
+  const { currency } = useVisitorCurrency({
+    initialCurrency,
+    initialSource,
+    skipQuery: Boolean(initialCurrency),
+  });
 
   const { mutate: createPaystackSession, isLoading } =
     trpc.createPaystackSession.useMutation({
@@ -41,7 +52,10 @@ function UpgradeButton({
     <Button
       disabled={isLoading}
       onClick={() =>
-        createPaystackSession(planSlug ? { planSlug } : undefined)
+        createPaystackSession({
+          ...(planSlug ? { planSlug } : {}),
+          currency,
+        })
       }
       className="w-full"
     >

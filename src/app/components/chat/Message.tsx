@@ -2,6 +2,12 @@ import { cn } from "@/lib/utils";
 import { ExtendedMessage } from "@/types/message";
 import { Icons } from "../Icons";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
+import InteractiveQuiz from "./InteractiveQuiz";
+import InteractiveFlashcards from "./InteractiveFlashcards";
+import { parseQuizData, parseFlashcardsData } from "@/lib/interactive-content";
 import { format } from "date-fns";
 import { forwardRef, useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
@@ -88,11 +94,25 @@ function formatMessageCitations(
 
   const citedSet = new Set<number>();
 
+  // Preserve mathematical formulas ($$...$$ and $...$) so equations with brackets/indices are never altered by citations
+  const mathPlaceholders: string[] = [];
+  let protectedBody = bodyText.replace(/\$\$[\s\S]*?\$\$/g, (block) => {
+    const token = `\u0000MATHBLK_${mathPlaceholders.length}\u0000`;
+    mathPlaceholders.push(block);
+    return token;
+  });
+
+  protectedBody = protectedBody.replace(/(?<!\\)\$(?!\$)([^\$\n]+?)(?<!\\)\$/g, (block) => {
+    const token = `\u0000MATHBLK_${mathPlaceholders.length}\u0000`;
+    mathPlaceholders.push(block);
+    return token;
+  });
+
   // Preserve fenced code blocks & non-citation inline code; unwrap citation-only backticks like `[Slide 5]`
   const codePlaceholders: string[] = [];
   const citationOnlyCodeRegex =
     /^`((?:[\[(]?(?:Doc(?:ument)?\s*\d+|Source:[^\n`]+|Page|Slide|Diapositiva|Diapositive|Folie|s\.|p\.)[^\n`]*[\])]?))`$/i;
-  const protectedBody = bodyText
+  protectedBody = protectedBody
     .replace(/```[\s\S]*?```/g, (block) => {
       const token = `\u0000CODEBLK_${codePlaceholders.length}\u0000`;
       codePlaceholders.push(block);
@@ -297,9 +317,12 @@ function formatMessageCitations(
     return match;
   });
 
-  // Restore protected code blocks
+  // Restore protected code blocks & mathematical equations
   formattedText = formattedText.replace(/\u0000CODEBLK_(\d+)\u0000/g, (_, idx) => {
     return codePlaceholders[Number(idx)] ?? "";
+  });
+  formattedText = formattedText.replace(/\u0000MATHBLK_(\d+)\u0000/g, (_, idx) => {
+    return mathPlaceholders[Number(idx)] ?? "";
   });
 
   // Include footer sources in legend whenever multi-doc response used footer mapping
@@ -403,16 +426,94 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
               }
             )}
           >
-            {typeof formattedText === "string" ? (
-              <ReactMarkdown
-                className={cn(
-                  "prose prose-sm sm:prose-base max-w-full min-w-0 break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_a]:break-all [&_img]:max-w-full",
-                  {
-                    "text-zinc-50 prose-invert": message.isUserMessage,
+            {(() => {
+              if (!message.isUserMessage && typeof formattedText === "string") {
+                if (!formattedText.includes("```quiz") && !formattedText.includes("```json:quiz")) {
+                  const standaloneQuiz = parseQuizData(formattedText);
+                  if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
+                    return <InteractiveQuiz data={standaloneQuiz} />;
                   }
-                )}
-                components={{
-                  a: ({ href, children, ...props }) => {
+                }
+                if (!formattedText.includes("```flashcards") && !formattedText.includes("```json:flashcards")) {
+                  const standaloneFlashcards = parseFlashcardsData(formattedText);
+                  if (standaloneFlashcards && standaloneFlashcards.cards.length >= 2) {
+                    return <InteractiveFlashcards data={standaloneFlashcards} />;
+                  }
+                }
+              }
+
+              if (typeof formattedText === "string") {
+                return (
+                  <ReactMarkdown
+                    className={cn(
+                      "prose prose-sm sm:prose-base max-w-full min-w-0 break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_a]:break-all [&_img]:max-w-full",
+                      {
+                        "text-zinc-50 prose-invert": message.isUserMessage,
+                      }
+                    )}
+                    remarkPlugins={[remarkMath, remarkGfm]}
+                    rehypePlugins={[rehypeKatex]}
+                    components={{
+                      code: ({ node, inline, className, children, ...props }: any) => {
+                        const match = /language-(\w+)/.exec(className || "");
+                        const lang = match ? match[1].toLowerCase() : "";
+                        const codeString = String(children || "").replace(/\n$/, "");
+
+                        if (!inline && (lang === "quiz" || lang === "quiz-json")) {
+                          const quizData = parseQuizData(codeString);
+                          if (quizData) {
+                            return <InteractiveQuiz data={quizData} />;
+                          }
+                        }
+
+                        if (
+                          !inline &&
+                          (lang === "flashcards" ||
+                            lang === "flashcard" ||
+                            lang === "cards")
+                        ) {
+                          const flashcardsData = parseFlashcardsData(codeString);
+                          if (flashcardsData) {
+                            return <InteractiveFlashcards data={flashcardsData} />;
+                          }
+                        }
+
+                        if (!inline && lang === "json") {
+                          const quizData = parseQuizData(codeString);
+                          if (quizData) return <InteractiveQuiz data={quizData} />;
+                          const flashData = parseFlashcardsData(codeString);
+                          if (flashData) return <InteractiveFlashcards data={flashData} />;
+                        }
+
+                        return (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      table: ({ children, ...props }) => (
+                        <div className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-zinc-200/90 bg-white shadow-2xs">
+                          <table className="w-full border-collapse text-left text-xs sm:text-sm font-sans" {...props}>
+                            {children}
+                          </table>
+                        </div>
+                      ),
+                      th: ({ children, ...props }) => (
+                        <th className="border-b border-zinc-200 bg-zinc-100/90 px-3 py-2 font-bold text-zinc-900 text-xs sm:text-sm" {...props}>
+                          {children}
+                        </th>
+                      ),
+                      td: ({ children, ...props }) => (
+                        <td className="border-b border-zinc-100 px-3 py-2 text-zinc-800 text-xs sm:text-sm" {...props}>
+                          {children}
+                        </td>
+                      ),
+                      tr: ({ children, ...props }) => (
+                        <tr className="hover:bg-zinc-50/70 transition-colors" {...props}>
+                          {children}
+                        </tr>
+                      ),
+                      a: ({ href, children, ...props }) => {
                     if (href?.startsWith("#jump-idx-")) {
                       const parts = href.replace("#jump-idx-", "").split("-");
                       const docIdx = parseInt(parts[0], 10);
@@ -571,9 +672,10 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
               >
                 {formattedText}
               </ReactMarkdown>
-            ) : (
-              formattedText
-            )}
+                );
+              }
+              return formattedText;
+            })()}
 
             {/* Compact Multi-Document Sources Key */}
             {!message.isUserMessage &&

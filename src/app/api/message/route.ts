@@ -420,6 +420,49 @@ export async function POST(req: NextRequest) {
 
     const multilingualTutorRule = `- Multilingual Document Understanding & Any-Language Tutoring: Users may upload documents written in ANY language and ask you to teach, explain, translate, or summarize them in ANY language (for example: uploading a French, Arabic, Chinese, Spanish, or Yoruba document and asking to be taught in English, Yoruba, Hausa, Igbo, French, Spanish, Arabic, etc.). Always teach in the exact language the user writes in or requests, breaking down concepts clearly step-by-step like a patient private tutor while keeping key terms and citations accurate.`;
 
+    const mathAndPracticeRule = `- Mathematical & Statistical Rigor & Formatting:
+  * Format all mathematical and statistical formulas using standard LaTeX syntax:
+    - Use inline math \`$ ... $\` for individual variables, metrics, symbols, and formulas (e.g., \`$H_0: \\mu = 0$\`, \`$\\sigma$\`, \`$\\bar{x}$\`, \`$p < 0.05$\`, \`$z = \\frac{\\bar{x} - \\mu_0}{\\sigma / \\sqrt{n}}$\`, \`$R^2 = 0.89$\`, \`$\\chi^2$\`).
+    - Use display block math \`$$ ... $$\` on its own lines for standalone or complex equations.
+  * For statistical results, summary statistics, frequency distributions, ANOVA tables, or regression outputs:
+    - ALWAYS format tabular data cleanly in standard Markdown tables with column headers (e.g., \`| Variable | Mean | Std Dev | 95% CI | p-value |\`).
+    - When discussing hypothesis testing, clearly break down: (1) Null Hypothesis ($H_0$) & Alternative Hypothesis ($H_a$), (2) Test Statistic & degrees of freedom, (3) p-value / critical threshold, and (4) Plain-language conclusion grounded in the document context.
+- Interactive Questions & Practice Quizzes:
+  * When the user requests questions, practice tests, or quizzes (e.g. "quiz me", "test me", "give me questions on this", "practice questions"):
+    - ALWAYS format the questions inside a \`\`\`quiz fenced code block in JSON format with a title, array of questions with options, correctIndex (0-based integer of correct option), and detailed explanation:
+\`\`\`quiz
+{
+  "title": "Practice Quiz: [Document / Topic]",
+  "questions": [
+    {
+      "id": 1,
+      "question": "Question text here?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Detailed explanation with formulas and reasoning."
+    }
+  ]
+}
+\`\`\`
+    - The interactive UI will automatically render this as a multiple-choice practice quiz where the user picks options, submits for automated scoring, and gets answers with explanations.
+- Interactive Study Flashcards:
+  * When the user requests flashcards or key terms to practice (e.g. "make flashcards", "create flashcards", "study cards"):
+    - ALWAYS format the flashcards inside a \`\`\`flashcards fenced code block in JSON format:
+\`\`\`flashcards
+{
+  "title": "Study Flashcards: [Topic]",
+  "cards": [
+    {
+      "id": 1,
+      "front": "Concept / Question / Term prompt",
+      "back": "Detailed definition, answer, or explanation",
+      "hint": "Optional hint to aid recall"
+    }
+  ]
+}
+\`\`\`
+    - The interactive UI will automatically render this as a 3D flip card deck where the user can practice, flip for answers, and track mastered vs review cards.`;
+
     const systemPrompt = isMultiDoc
       ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
       }).
@@ -432,6 +475,7 @@ Your strict instructions:
 - Simple Compact Citations: Cite claims using ONLY concise numbered tags like [1 · p.3] (Page 3 of Document [1]) or [2 · s.5] (Slide 5 of Document [2]). Cite multiple sources side-by-side cleanly as [1 · p.3] [2 · s.5]. Do NOT write long filenames inside citation brackets, and never cite a page/slide higher than a document's stated total.
 - Single-Source Questions in Multi-Doc Mode: If a question only appears in some of the documents, state clearly which document(s) contain the answer and which do not.
 ${multilingualTutorRule}
+${mathAndPracticeRule}
 - Library Awareness: If the user asks about another library file listed above that is NOT loaded, tell them its exact name and suggest clicking "Add Document" / asking directly by filename.${autoMultiNote}
 - Ground all facts strictly in the provided document contexts.`
       : isPro
@@ -446,6 +490,7 @@ Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.t
 Your goal is to provide exceptional, comprehensive, and deeply analytical tutoring from the provided document:
 - Deliver thorough, structured explanations with key takeaways, deep technical context, and precise details.
 ${multilingualTutorRule}
+${mathAndPracticeRule}
 - Formatting & Citations: Always format with clean Markdown. Include clickable citations like [${primaryResult?.unitLabel || "Page"
         } X] whenever available so the user can jump directly to the source.
 ${singlePageConstraint}
@@ -462,6 +507,7 @@ Current Document: "${primaryResult?.file?.name || "Document"}"${primaryResult?.t
 Your goal is to help the user understand and learn from their uploaded document:
 - Provide clear, direct, and easy-to-follow explanations based strictly on the document context.
 ${multilingualTutorRule}
+${mathAndPracticeRule}
 - Formatting & Citations: Use Markdown and cite references like [${primaryResult?.unitLabel || "Page"
         } X] where identifiable.
 ${singlePageConstraint}

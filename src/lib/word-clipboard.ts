@@ -1,3 +1,5 @@
+import { parseQuizData, parseFlashcardsData } from "./interactive-content";
+
 export interface WordCitationSource {
   id?: string;
   name: string;
@@ -539,6 +541,7 @@ function parseMarkdownBlocks(
     if (fenceMatch) {
       const fenceChar = fenceMatch[1][0];
       const fenceLen = fenceMatch[1].length;
+      const lang = (fenceMatch[2] || "").trim().toLowerCase();
       const codeLines: string[] = [];
       i++;
       while (i < lines.length) {
@@ -551,6 +554,54 @@ function parseMarkdownBlocks(
         i++;
       }
       const codeText = codeLines.join("\n").replace(/\n+$/, "");
+
+      if (lang === "quiz" || lang === "quiz-json") {
+        const quiz = parseQuizData(codeText);
+        if (quiz) {
+          const qItemsHtml = quiz.questions
+            .map(
+              (q, idx) =>
+                `<li style="${WORD_STYLES.li}"><strong>${idx + 1}. ${escapeHtml(q.question)}</strong><br/>${q.options
+                  .map((opt, oIdx) => `&nbsp;&nbsp;${String.fromCharCode(65 + oIdx)}) ${escapeHtml(opt)}`)
+                  .join("<br/>")}<br/><em>Correct Answer: ${String.fromCharCode(65 + q.correctIndex)} — ${escapeHtml(q.explanation)}</em></li>`
+            )
+            .join("");
+          const qItemsPlain = quiz.questions
+            .map(
+              (q, idx) =>
+                `${idx + 1}. ${q.question}\n${q.options
+                  .map((opt, oIdx) => `   ${String.fromCharCode(65 + oIdx)}) ${opt}`)
+                  .join("\n")}\n   Answer: ${String.fromCharCode(65 + q.correctIndex)} — ${q.explanation}`
+            )
+            .join("\n\n");
+          blocks.push({
+            html: `<h3 style="${WORD_STYLES.headings[3]}">${escapeHtml(quiz.title)}</h3><ol style="${WORD_STYLES.olTop}">${qItemsHtml}</ol>`,
+            plain: `${quiz.title}\n\n${qItemsPlain}\n\n`,
+          });
+          continue;
+        }
+      }
+
+      if (lang === "flashcards" || lang === "cards") {
+        const flash = parseFlashcardsData(codeText);
+        if (flash) {
+          const cardItemsHtml = flash.cards
+            .map(
+              (c, idx) =>
+                `<li style="${WORD_STYLES.li}"><strong>Card ${idx + 1} (${escapeHtml(c.front)}):</strong> ${escapeHtml(c.back)}${c.hint ? ` <em>(Hint: ${escapeHtml(c.hint)})</em>` : ""}</li>`
+            )
+            .join("");
+          const cardItemsPlain = flash.cards
+            .map((c, idx) => `Card ${idx + 1}: ${c.front}\nAnswer: ${c.back}${c.hint ? ` (Hint: ${c.hint})` : ""}`)
+            .join("\n\n");
+          blocks.push({
+            html: `<h3 style="${WORD_STYLES.headings[3]}">${escapeHtml(flash.title)}</h3><ul style="${WORD_STYLES.ulTop}">${cardItemsHtml}</ul>`,
+            plain: `${flash.title}\n\n${cardItemsPlain}\n\n`,
+          });
+          continue;
+        }
+      }
+
       blocks.push({
         html: `<pre style="${WORD_STYLES.pre}"><code style="font-family: ${WORD_MONO_FAMILY}; font-size: 9.5pt; color: #111827; background-color: transparent;">${escapeHtml(
           codeText
@@ -1105,6 +1156,39 @@ function cleanDomNodesForWord(
       continue;
     }
 
+    const classNameStr =
+      typeof (el as any).className === "string"
+        ? (el as any).className
+        : (el as any).getAttribute?.("class") || "";
+    if (classNameStr.includes("katex")) {
+      const tex =
+        (el as any).querySelector?.("annotation")?.textContent?.trim() ||
+        el.textContent?.trim() ||
+        "";
+      const isDisplay =
+        classNameStr.includes("katex-display") ||
+        (el as any).closest?.(".katex-display") !== null;
+
+      if (isDisplay) {
+        const p = doc.createElement("p");
+        p.setAttribute(
+          "style",
+          `font-family: 'Cambria Math', 'Times New Roman', ${WORD_FONT_FAMILY}; font-size: 11pt; line-height: 1.25; color: #000000; text-align: center; margin: 4pt 0 8pt 0; font-style: italic;`
+        );
+        p.textContent = tex;
+        result.push(p);
+      } else {
+        const span = doc.createElement("span");
+        span.setAttribute(
+          "style",
+          `font-family: 'Cambria Math', 'Times New Roman', ${WORD_FONT_FAMILY}; font-size: 11pt; color: #000000; font-style: italic;`
+        );
+        span.textContent = tex;
+        result.push(span);
+      }
+      continue;
+    }
+
     if (tag === "P") {
       const children = cleanDomNodesForWord(Array.from(el.childNodes), doc, ctx);
       const hasContent =
@@ -1376,6 +1460,23 @@ function serializeNodesToPlainText(
       parts.push("\n");
       continue;
     }
+
+    const classNameStr =
+      typeof (el as any).className === "string"
+        ? (el as any).className
+        : (el as any).getAttribute?.("class") || "";
+    if (classNameStr.includes("katex")) {
+      const tex =
+        (el as any).querySelector?.("annotation")?.textContent?.trim() ||
+        el.textContent?.trim() ||
+        "";
+      const isDisplay =
+        classNameStr.includes("katex-display") ||
+        (el as any).closest?.(".katex-display") !== null;
+      parts.push(isDisplay ? `\n$$${tex}$$\n\n` : `$${tex}$`);
+      continue;
+    }
+
     if (tag === "P" && el.getAttribute("data-wd-hr") === "true") {
       parts.push("────────────────────────────────\n\n");
       continue;

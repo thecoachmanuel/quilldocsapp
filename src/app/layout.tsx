@@ -1,5 +1,6 @@
 import { cn, constructMetadata } from "@/lib/utils";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 import type { Viewport } from "next";
 import Navbar from "./components/Navbar";
 import Providers from "./components/Providers";

@@ -8,6 +8,7 @@ import { PineconeStore } from "langchain/vectorstores/pinecone";
 import {
   buildStructuredDocumentContext,
   createCompletionWithFallback,
+  getEmbeddingsConfig,
   isAiConfigured,
   toFriendlyAiErrorMessage,
 } from "@/lib/ai";
@@ -198,23 +199,16 @@ export async function POST(req: NextRequest) {
     let pineconeIndex: any = null;
 
     if (isPineconeConfigured) {
-      const apiKey =
-        process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-      const isUsingOpenRouter =
-        !process.env.OPENAI_API_KEY && Boolean(process.env.OPENROUTER_API_KEY);
+      const embedCfg = getEmbeddingsConfig();
 
-      if (apiKey) {
+      if (embedCfg) {
         try {
           embeddings = new OpenAIEmbeddings(
             {
-              openAIApiKey: apiKey,
-              modelName: isUsingOpenRouter
-                ? "openai/text-embedding-ada-002"
-                : "text-embedding-ada-002",
+              openAIApiKey: embedCfg.apiKey,
+              modelName: embedCfg.modelName,
             },
-            isUsingOpenRouter
-              ? { basePath: "https://openrouter.ai/api/v1" }
-              : undefined
+            embedCfg.basePath ? { basePath: embedCfg.basePath } : undefined
           );
           pineconeIndex = pinecone.Index("quill");
         } catch (embedInitErr) {

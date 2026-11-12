@@ -42,7 +42,7 @@ function sanitizeChatErrorMessage(raw: unknown): string {
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (
     !trimmed ||
-    /openrouter|402|add credits|more credits|fewer max_tokens|upgrade to a paid|<!doctype|<html/i.test(
+    /openrouter|402|add credits|more credits|fewer max_tokens|upgrade to a paid|generativelanguage|resource_exhausted|quota exceeded|<!doctype|<html/i.test(
       trimmed
     )
   ) {

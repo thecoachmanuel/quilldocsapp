@@ -181,21 +181,18 @@ export async function vectorizeAndIndexDocument({
 
     // 2. Vectorize and index into Pinecone if configured
     if (isPineconeConfigured) {
-      const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-      const isUsingOpenRouter =
-        !process.env.OPENAI_API_KEY && Boolean(process.env.OPENROUTER_API_KEY);
+      const { getEmbeddingsConfig } = await import("@/lib/ai");
+      const embedCfg = getEmbeddingsConfig();
 
-      if (apiKey) {
+      if (embedCfg) {
         const embeddings = new OpenAIEmbeddings(
           {
-            openAIApiKey: apiKey,
-            modelName: isUsingOpenRouter
-              ? "openai/text-embedding-ada-002"
-              : "text-embedding-ada-002",
+            openAIApiKey: embedCfg.apiKey,
+            modelName: embedCfg.modelName,
           },
-          isUsingOpenRouter
+          embedCfg.basePath
             ? {
-                basePath: "https://openrouter.ai/api/v1",
+                basePath: embedCfg.basePath,
               }
             : undefined
         );

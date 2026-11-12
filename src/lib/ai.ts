@@ -2,19 +2,52 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 
-// OpenRouter & OpenAI API keys (trimmed cleanly)
-const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
-const openAiKey = process.env.OPENAI_API_KEY?.trim();
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const GEMINI_OPENAI_BASE_URL =
+  "https://generativelanguage.googleapis.com/v1beta/openai/";
 
-export const isOpenRouterActive = Boolean(
-  openRouterKey && !openRouterKey.includes("<your")
-);
+function parseKeyList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[\r\n,;]+/)
+    .map((k) => k.trim().replace(/^["']|["']$/g, ""))
+    .filter((k) => Boolean(k) && !k.includes("<your"));
+}
 
-export const isOpenAiActive = Boolean(
-  openAiKey && !openAiKey.includes("<your")
-);
+function collectEnvKeys(baseNames: string[]): string[] {
+  const collected: string[] = [];
+  for (const name of baseNames) {
+    collected.push(...parseKeyList(process.env[name]));
+    collected.push(...parseKeyList(process.env[`${name}S`]));
+    for (let i = 1; i <= 15; i++) {
+      collected.push(...parseKeyList(process.env[`${name}_${i}`]));
+    }
+  }
+  return Array.from(new Set(collected));
+}
 
-export const isAiConfigured = isOpenRouterActive || isOpenAiActive;
+export function getOpenRouterKeys(): string[] {
+  return collectEnvKeys(["OPENROUTER_API_KEY"]);
+}
+
+export function getGeminiKeys(): string[] {
+  return collectEnvKeys([
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+  ]);
+}
+
+export function getOpenAiKeys(): string[] {
+  return collectEnvKeys(["OPENAI_API_KEY"]);
+}
+
+export const isOpenRouterActive = getOpenRouterKeys().length > 0;
+export const isGeminiActive = getGeminiKeys().length > 0;
+export const isOpenAiActive = getOpenAiKeys().length > 0;
+
+export const isAiConfigured =
+  isOpenRouterActive || isGeminiActive || isOpenAiActive;
 
 export const OPENROUTER_FREE_ROUTER = "openrouter/free";
 
@@ -28,6 +61,15 @@ const rawPrimaryModels = [
 
 export const FALLBACK_MODELS = Array.from(new Set(rawPrimaryModels));
 
+const rawGeminiFreeModels = [
+  process.env.GEMINI_MODEL?.trim(),
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+].filter((m): m is string => Boolean(m));
+
+export const GEMINI_FREE_MODELS = Array.from(new Set(rawGeminiFreeModels));
+
 const BACKUP_FREE_OPENROUTER_MODELS = [
   OPENROUTER_FREE_ROUTER,
   "google/gemma-3-27b-it:free",
@@ -39,25 +81,69 @@ const BACKUP_FREE_OPENROUTER_MODELS = [
 let cachedFreeModels: { models: string[]; expiresAt: number } | null = null;
 const FREE_MODELS_CACHE_TTL_MS = 30 * 60 * 1000;
 
-export function getAiClient(provider?: "openrouter" | "openai") {
-  const useOpenRouter =
-    provider === "openrouter" || (provider !== "openai" && isOpenRouterActive);
+export function getAiClient(
+  provider?: "openrouter" | "gemini" | "openai",
+  apiKeyOverride?: string
+) {
+  const orKeys = getOpenRouterKeys();
+  const gmKeys = getGeminiKeys();
+  const oaKeys = getOpenAiKeys();
 
-  if (useOpenRouter && isOpenRouterActive) {
+  const resolvedProvider =
+    provider ||
+    (orKeys.length > 0 ? "openrouter" : gmKeys.length > 0 ? "gemini" : "openai");
+
+  if (resolvedProvider === "openrouter") {
     return new OpenAI({
-      apiKey: openRouterKey,
-      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: apiKeyOverride || orKeys[0] || "dummy-key",
+      baseURL: OPENROUTER_BASE_URL,
+      maxRetries: 0,
       defaultHeaders: {
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "HTTP-Referer":
+          process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
         "X-Title": "Quill - AI PDF Assistant",
       },
     });
   }
 
-  // Fallback to direct OpenAI if OPENAI_API_KEY is supplied
+  if (resolvedProvider === "gemini") {
+    return new OpenAI({
+      apiKey: apiKeyOverride || gmKeys[0] || "dummy-key",
+      baseURL: GEMINI_OPENAI_BASE_URL,
+      maxRetries: 0,
+    });
+  }
+
   return new OpenAI({
-    apiKey: openAiKey || "dummy-key",
+    apiKey: apiKeyOverride || oaKeys[0] || "dummy-key",
+    maxRetries: 0,
   });
+}
+
+export function getEmbeddingsConfig(): {
+  apiKey: string;
+  isOpenRouter: boolean;
+  modelName: string;
+  basePath?: string;
+} | null {
+  const openAiKey = getOpenAiKeys()[0];
+  if (openAiKey) {
+    return {
+      apiKey: openAiKey,
+      isOpenRouter: false,
+      modelName: "text-embedding-ada-002",
+    };
+  }
+  const openRouterKey = getOpenRouterKeys()[0];
+  if (openRouterKey) {
+    return {
+      apiKey: openRouterKey,
+      isOpenRouter: true,
+      modelName: "openai/text-embedding-ada-002",
+      basePath: OPENROUTER_BASE_URL,
+    };
+  }
+  return null;
 }
 
 import { parseDocument } from "@/lib/document-parser";
@@ -429,7 +515,19 @@ export function isCreditOrUpgradeError(status: number | null, msg: string): bool
 function isRateLimitError(status: number | null, msg: string): boolean {
   return (
     status === 429 ||
-    /rate[- ]limit|too many requests|quota exceeded|temporarily rate-limited/i.test(msg)
+    /rate[- ]limit|too many requests|quota exceeded|temporarily rate-limited|resource_exhausted/i.test(
+      msg
+    )
+  );
+}
+
+function isAuthError(status: number | null, msg: string): boolean {
+  return (
+    status === 401 ||
+    status === 403 ||
+    /invalid[_ ]api[_ ]key|api key not valid|api_key_invalid|incorrect api key|unauthorized|permission_denied/i.test(
+      msg
+    )
   );
 }
 
@@ -569,9 +667,202 @@ async function attemptCompletionStream(
   });
 }
 
+type AiProvider = "openrouter" | "gemini" | "openai";
+
+type KeyCooldownBucket = {
+  rateLimitedUntil: number;
+  paidBlockedUntil: number;
+  invalidUntil: number;
+};
+
+const RATE_LIMIT_COOLDOWN_MS = 45 * 1000;
+const PAID_BLOCKED_COOLDOWN_MS = 5 * 60 * 1000;
+const INVALID_KEY_COOLDOWN_MS = 10 * 60 * 1000;
+
+const keyCooldowns = new Map<string, KeyCooldownBucket>();
+const providerCursors: Record<AiProvider, number> = {
+  openrouter: 0,
+  gemini: 0,
+  openai: 0,
+};
+
+export function resetAiKeyStateForTests() {
+  keyCooldowns.clear();
+  cachedFreeModels = null;
+  providerCursors.openrouter = 0;
+  providerCursors.gemini = 0;
+  providerCursors.openai = 0;
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 8) return "***";
+  return `${key.slice(0, 5)}...${key.slice(-4)}`;
+}
+
+function markKeyCooldown(
+  key: string,
+  kind: "rateLimitedUntil" | "paidBlockedUntil" | "invalidUntil",
+  durationMs: number
+) {
+  const existing = keyCooldowns.get(key) || {
+    rateLimitedUntil: 0,
+    paidBlockedUntil: 0,
+    invalidUntil: 0,
+  };
+  existing[kind] = Math.max(existing[kind], Date.now() + durationMs);
+  keyCooldowns.set(key, existing);
+}
+
+function getOrderedKeys(
+  provider: AiProvider,
+  keys: string[],
+  options?: { excludePaidBlocked?: boolean }
+): string[] {
+  if (keys.length === 0) return [];
+
+  const start = providerCursors[provider] % keys.length;
+  providerCursors[provider] = (providerCursors[provider] + 1) % keys.length;
+  const rotated = [...keys.slice(start), ...keys.slice(0, start)];
+
+  const now = Date.now();
+  const ready: string[] = [];
+  const rateCooled: string[] = [];
+
+  for (const key of rotated) {
+    const b = keyCooldowns.get(key);
+    if (b?.invalidUntil && b.invalidUntil > now) {
+      continue;
+    }
+    if (options?.excludePaidBlocked && b?.paidBlockedUntil && b.paidBlockedUntil > now) {
+      continue;
+    }
+    if (b?.rateLimitedUntil && b.rateLimitedUntil > now) {
+      rateCooled.push(key);
+    } else {
+      ready.push(key);
+    }
+  }
+
+  if (ready.length > 0 || rateCooled.length > 0) {
+    return [...ready, ...rateCooled];
+  }
+
+  // If every key was excluded only for auth errors, avoid returning blocked paid keys
+  if (options?.excludePaidBlocked) {
+    return rotated.filter((k) => {
+      const b = keyCooldowns.get(k);
+      return !(b?.paidBlockedUntil && b.paidBlockedUntil > now);
+    });
+  }
+  return rotated;
+}
+
+function recordKeyFailure(key: string, status: number | null, msg: string) {
+  if (isAuthError(status, msg)) {
+    markKeyCooldown(key, "invalidUntil", INVALID_KEY_COOLDOWN_MS);
+  } else if (isCreditOrUpgradeError(status, msg)) {
+    markKeyCooldown(key, "paidBlockedUntil", PAID_BLOCKED_COOLDOWN_MS);
+  } else if (isRateLimitError(status, msg)) {
+    markKeyCooldown(key, "rateLimitedUntil", RATE_LIMIT_COOLDOWN_MS);
+  }
+}
+
+async function runProviderModelFallback({
+  provider,
+  providerLabel,
+  keys,
+  models,
+  messages,
+  temperature,
+  maxTokens,
+  compactContextChars,
+  compactHistoryTurns,
+}: {
+  provider: AiProvider;
+  providerLabel: string;
+  keys: string[];
+  models: string[];
+  messages: ChatMessageParam[];
+  temperature: number;
+  maxTokens: number;
+  compactContextChars: number;
+  compactHistoryTurns: number;
+}): Promise<{ response?: any; activeModel?: string; lastError: any }> {
+  let lastError: any = null;
+  let currentMessages = compactMessagesForBudget(
+    messages,
+    compactContextChars,
+    compactHistoryTurns
+  );
+  let currentMaxTokens = maxTokens;
+
+  for (const model of models) {
+    const orderedKeys = getOrderedKeys(provider, keys);
+    let modelHadRateLimitOnly = true;
+
+    for (const key of orderedKeys) {
+      const client = getAiClient(provider, key);
+      try {
+        console.log(
+          `[AI] Attempting ${providerLabel} model ${model} (key ${maskKey(key)})`
+        );
+        const response = await attemptCompletionStream(client, {
+          model,
+          messages: currentMessages,
+          temperature,
+          max_tokens: currentMaxTokens,
+        });
+        return { response, activeModel: model, lastError: null };
+      } catch (err: any) {
+        const msg = getErrorMessage(err);
+        const status = extractErrorStatus(err, msg);
+        console.warn(
+          `[AI] ${providerLabel} ${model} failed on key ${maskKey(key)} (${status ?? "err"}):`,
+          msg
+        );
+        lastError = err;
+        recordKeyFailure(key, status, msg);
+
+        if (isContextTooLongError(status, msg)) {
+          modelHadRateLimitOnly = false;
+          currentMessages = compactMessagesForBudget(
+            messages,
+            Math.min(9000, Math.floor(compactContextChars / 2)),
+            2
+          );
+          currentMaxTokens = Math.min(currentMaxTokens, 900);
+          try {
+            const retryRes = await attemptCompletionStream(client, {
+              model,
+              messages: currentMessages,
+              temperature,
+              max_tokens: currentMaxTokens,
+            });
+            return { response: retryRes, activeModel: model, lastError: null };
+          } catch (retryErr: any) {
+            const retryMsg = getErrorMessage(retryErr);
+            const retryStatus = extractErrorStatus(retryErr, retryMsg);
+            lastError = retryErr;
+            recordKeyFailure(key, retryStatus, retryMsg);
+          }
+        } else if (!isRateLimitError(status, msg)) {
+          modelHadRateLimitOnly = false;
+        }
+      }
+    }
+
+    if (modelHadRateLimitOnly && models.length > 1) {
+      await sleep(250);
+    }
+  }
+
+  return { lastError };
+}
+
 /**
- * Robust chat completion with dynamic credit/token adaptation, automatic
- * OpenRouter `:free` router fallback, and optional direct OpenAI fallback.
+ * Robust chat completion with multi-key round-robin & cooldown rotation,
+ * adaptive OpenRouter credit/token clamping, OpenRouter `:free` router fallback,
+ * free Google Gemini API key pool fallback, and optional direct OpenAI fallback.
  */
 export async function createCompletionWithFallback({
   messages,
@@ -583,150 +874,169 @@ export async function createCompletionWithFallback({
   max_tokens?: number;
 }) {
   let lastError: any = null;
+  const openRouterKeys = getOpenRouterKeys();
+  const geminiKeys = getGeminiKeys();
+  const openAiKeys = getOpenAiKeys();
 
-  if (isOpenRouterActive) {
-    const openRouter = getAiClient("openrouter");
+  if (openRouterKeys.length > 0) {
     let currentMessages = messages;
-    let currentMaxTokens = max_tokens;
-    let paidCreditsExhausted = false;
+    const currentMaxTokens = max_tokens;
 
-    // 1. Primary/cost-efficient OpenRouter models with adaptive 402 & context recovery
+    // 1. Primary/cost-efficient OpenRouter models across all OpenRouter keys
     for (const model of FALLBACK_MODELS) {
-      if (paidCreditsExhausted) break;
+      const paidKeys = getOrderedKeys("openrouter", openRouterKeys, {
+        excludePaidBlocked: true,
+      });
+      if (paidKeys.length === 0) break;
 
-      try {
-        console.log(`[AI] Attempting OpenRouter model: ${model}`);
-        const response = await attemptCompletionStream(openRouter, {
-          model,
-          messages: currentMessages,
-          temperature,
-          max_tokens: currentMaxTokens,
-        });
-        return { response, activeModel: model };
-      } catch (err: any) {
-        const msg = getErrorMessage(err);
-        const status = extractErrorStatus(err, msg);
-        console.warn(`[AI] Model ${model} failed (${status ?? "err"}):`, msg);
-        lastError = err;
+      for (const key of paidKeys) {
+        const openRouter = getAiClient("openrouter", key);
+        try {
+          console.log(
+            `[AI] Attempting OpenRouter model: ${model} (key ${maskKey(key)})`
+          );
+          const response = await attemptCompletionStream(openRouter, {
+            model,
+            messages: currentMessages,
+            temperature,
+            max_tokens: currentMaxTokens,
+          });
+          return { response, activeModel: model };
+        } catch (err: any) {
+          const msg = getErrorMessage(err);
+          const status = extractErrorStatus(err, msg);
+          console.warn(
+            `[AI] Model ${model} failed on key ${maskKey(key)} (${status ?? "err"}):`,
+            msg
+          );
+          lastError = err;
 
-        if (isCreditOrUpgradeError(status, msg)) {
-          const affordable = extractAffordableTokens(msg);
-          if (affordable !== null && affordable >= 240) {
-            const clampedTokens = Math.max(
-              220,
-              Math.min(currentMaxTokens - 100, Math.floor(affordable * 0.85))
-            );
+          if (isCreditOrUpgradeError(status, msg)) {
+            const affordable = extractAffordableTokens(msg);
+            if (affordable !== null && affordable >= 240) {
+              const clampedTokens = Math.max(
+                220,
+                Math.min(currentMaxTokens - 100, Math.floor(affordable * 0.85))
+              );
+              const compactedMsgs = compactMessagesForBudget(
+                currentMessages,
+                affordable < 800 ? 10000 : 18000,
+                4
+              );
+              try {
+                console.log(
+                  `[AI] Retrying ${model} on key ${maskKey(key)} with clamped max_tokens=${clampedTokens}`
+                );
+                const retryRes = await attemptCompletionStream(openRouter, {
+                  model,
+                  messages: compactedMsgs,
+                  temperature,
+                  max_tokens: clampedTokens,
+                });
+                return { response: retryRes, activeModel: model };
+              } catch (retryErr: any) {
+                const retryMsg = getErrorMessage(retryErr);
+                const retryStatus = extractErrorStatus(retryErr, retryMsg);
+                lastError = retryErr;
+                recordKeyFailure(key, retryStatus, retryMsg);
+              }
+            } else {
+              markKeyCooldown(key, "paidBlockedUntil", PAID_BLOCKED_COOLDOWN_MS);
+            }
+          } else if (isContextTooLongError(status, msg)) {
             const compactedMsgs = compactMessagesForBudget(
               currentMessages,
-              affordable < 800 ? 10000 : 18000,
+              14000,
               4
             );
+            currentMessages = compactedMsgs;
             try {
-              console.log(
-                `[AI] Retrying ${model} with clamped max_tokens=${clampedTokens}`
-              );
               const retryRes = await attemptCompletionStream(openRouter, {
                 model,
                 messages: compactedMsgs,
                 temperature,
-                max_tokens: clampedTokens,
+                max_tokens: Math.min(currentMaxTokens, 1200),
               });
               return { response: retryRes, activeModel: model };
             } catch (retryErr: any) {
               const retryMsg = getErrorMessage(retryErr);
               const retryStatus = extractErrorStatus(retryErr, retryMsg);
               lastError = retryErr;
-              if (isCreditOrUpgradeError(retryStatus, retryMsg)) {
-                paidCreditsExhausted = true;
-              }
+              recordKeyFailure(key, retryStatus, retryMsg);
             }
           } else {
-            paidCreditsExhausted = true;
-          }
-        } else if (isContextTooLongError(status, msg)) {
-          const compactedMsgs = compactMessagesForBudget(currentMessages, 14000, 4);
-          currentMessages = compactedMsgs;
-          try {
-            const retryRes = await attemptCompletionStream(openRouter, {
-              model,
-              messages: compactedMsgs,
-              temperature,
-              max_tokens: Math.min(currentMaxTokens, 1200),
-            });
-            return { response: retryRes, activeModel: model };
-          } catch (retryErr: any) {
-            lastError = retryErr;
+            recordKeyFailure(key, status, msg);
           }
         }
       }
     }
 
-    // 2. Zero-credit OpenRouter `:free` tier router & discovered free models fallback
+    // 2. Zero-credit OpenRouter `:free` router & models across ALL OpenRouter keys
     const freeCandidates = await getFreeOpenRouterCandidates();
-    let freeMessages = compactMessagesForBudget(messages, 20000, 6);
-    let freeMaxTokens = Math.min(max_tokens, 1400);
-
-    for (const freeModel of freeCandidates) {
-      try {
-        console.log(`[AI] Attempting OpenRouter free fallback: ${freeModel}`);
-        const response = await attemptCompletionStream(openRouter, {
-          model: freeModel,
-          messages: freeMessages,
-          temperature,
-          max_tokens: freeMaxTokens,
-        });
-        return { response, activeModel: freeModel };
-      } catch (err: any) {
-        const msg = getErrorMessage(err);
-        const status = extractErrorStatus(err, msg);
-        console.warn(`[AI] Free model ${freeModel} failed (${status ?? "err"}):`, msg);
-        lastError = err;
-
-        if (isContextTooLongError(status, msg)) {
-          freeMessages = compactMessagesForBudget(messages, 9000, 2);
-          freeMaxTokens = Math.min(freeMaxTokens, 900);
-          try {
-            const retryRes = await attemptCompletionStream(openRouter, {
-              model: freeModel,
-              messages: freeMessages,
-              temperature,
-              max_tokens: freeMaxTokens,
-            });
-            return { response: retryRes, activeModel: freeModel };
-          } catch (retryErr: any) {
-            lastError = retryErr;
-          }
-        } else if (isRateLimitError(status, msg)) {
-          await sleep(450);
-        }
-      }
+    const freeRes = await runProviderModelFallback({
+      provider: "openrouter",
+      providerLabel: "OpenRouter free",
+      keys: openRouterKeys,
+      models: freeCandidates,
+      messages,
+      temperature,
+      maxTokens: Math.min(max_tokens, 1400),
+      compactContextChars: 20000,
+      compactHistoryTurns: 6,
+    });
+    if (freeRes.response && freeRes.activeModel) {
+      return { response: freeRes.response, activeModel: freeRes.activeModel };
     }
+    if (freeRes.lastError) lastError = freeRes.lastError;
   }
 
-  // 3. Direct OpenAI fallback (if OPENAI_API_KEY is configured cleanly)
-  if (isOpenAiActive) {
-    const openAiClient = getAiClient("openai");
-    const openAiModels = ["gpt-4o-mini", "gpt-3.5-turbo"];
-    const directMessages = compactMessagesForBudget(messages, 24000, 6);
-
-    for (const model of openAiModels) {
-      try {
-        console.log(`[AI] Attempting direct OpenAI fallback: ${model}`);
-        const response = await attemptCompletionStream(openAiClient, {
-          model,
-          messages: directMessages,
-          temperature,
-          max_tokens: Math.min(max_tokens, 1600),
-        });
-        return { response, activeModel: model };
-      } catch (err: any) {
-        console.warn(`[AI] Direct OpenAI ${model} failed:`, getErrorMessage(err));
-        lastError = err;
-      }
+  // 3. Google Gemini Free Tier fallback across multiple Gemini API keys
+  if (geminiKeys.length > 0) {
+    const geminiRes = await runProviderModelFallback({
+      provider: "gemini",
+      providerLabel: "Gemini free",
+      keys: geminiKeys,
+      models: GEMINI_FREE_MODELS,
+      messages,
+      temperature,
+      maxTokens: Math.min(max_tokens, 2000),
+      compactContextChars: 36000,
+      compactHistoryTurns: 8,
+    });
+    if (geminiRes.response && geminiRes.activeModel) {
+      return {
+        response: geminiRes.response,
+        activeModel: geminiRes.activeModel,
+      };
     }
+    if (geminiRes.lastError) lastError = geminiRes.lastError;
   }
 
-  throw lastError || new Error("All AI models in the fallback chain were unavailable.");
+  // 4. Direct OpenAI fallback (across any configured OPENAI_API_KEY / _1..N)
+  if (openAiKeys.length > 0) {
+    const openAiRes = await runProviderModelFallback({
+      provider: "openai",
+      providerLabel: "Direct OpenAI",
+      keys: openAiKeys,
+      models: ["gpt-4o-mini", "gpt-3.5-turbo"],
+      messages,
+      temperature,
+      maxTokens: Math.min(max_tokens, 1600),
+      compactContextChars: 24000,
+      compactHistoryTurns: 6,
+    });
+    if (openAiRes.response && openAiRes.activeModel) {
+      return {
+        response: openAiRes.response,
+        activeModel: openAiRes.activeModel,
+      };
+    }
+    if (openAiRes.lastError) lastError = openAiRes.lastError;
+  }
+
+  throw (
+    lastError || new Error("All AI models in the fallback chain were unavailable.")
+  );
 }
 
 export function toFriendlyAiErrorMessage(err: any): string {

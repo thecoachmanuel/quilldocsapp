@@ -63,19 +63,7 @@ export function PlanPriceDisplay({
           <span className="text-gray-500 font-medium text-lg">/mo</span>
         )}
       </div>
-      {!isFree ? (
-        <span className="text-xs font-medium text-zinc-500 mt-1">
-          {currency === "USD"
-            ? `${formatCurrencyAmount(priceUsd, "USD")} USD / month`
-            : `(~ ${formatCurrencyAmount(priceUsd, "USD")} USD)`}
-        </span>
-      ) : (
-        <span className="text-xs font-medium text-zinc-500 mt-1">
-          {currency === "USD"
-            ? "$0 USD • Free forever"
-            : "₦0 • Free forever"}
-        </span>
-      )}
     </div>
   );
 }
+

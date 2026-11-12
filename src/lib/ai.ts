@@ -2,28 +2,48 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 
-// OpenRouter API client
-const openRouterKey = process.env.OPENROUTER_API_KEY;
-const openAiKey = process.env.OPENAI_API_KEY;
+// OpenRouter & OpenAI API keys (trimmed cleanly)
+const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
+const openAiKey = process.env.OPENAI_API_KEY?.trim();
 
 export const isOpenRouterActive = Boolean(
   openRouterKey && !openRouterKey.includes("<your")
 );
 
-export const isAiConfigured = Boolean(
-  (openRouterKey && !openRouterKey.includes("<your")) ||
-  (openAiKey && !openAiKey.includes("<your"))
+export const isOpenAiActive = Boolean(
+  openAiKey && !openAiKey.includes("<your")
 );
 
-// High-capacity, intelligent models ranked for document QA and throughput
-export const FALLBACK_MODELS = [
-  process.env.AI_MODEL || "google/gemini-2.5-flash",
+export const isAiConfigured = isOpenRouterActive || isOpenAiActive;
+
+export const OPENROUTER_FREE_ROUTER = "openrouter/free";
+
+// High-capacity, cost-efficient models ranked for document QA and throughput
+const rawPrimaryModels = [
+  process.env.AI_MODEL?.trim(),
+  "google/gemini-2.5-flash",
   "openai/gpt-4o-mini",
   "deepseek/deepseek-chat",
+].filter((m): m is string => Boolean(m));
+
+export const FALLBACK_MODELS = Array.from(new Set(rawPrimaryModels));
+
+const BACKUP_FREE_OPENROUTER_MODELS = [
+  OPENROUTER_FREE_ROUTER,
+  "google/gemma-3-27b-it:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "mistralai/mistral-small-3.1-24b-instruct:free",
+  "qwen/qwen-2.5-72b-instruct:free",
 ];
 
-export function getAiClient() {
-  if (isOpenRouterActive) {
+let cachedFreeModels: { models: string[]; expiresAt: number } | null = null;
+const FREE_MODELS_CACHE_TTL_MS = 30 * 60 * 1000;
+
+export function getAiClient(provider?: "openrouter" | "openai") {
+  const useOpenRouter =
+    provider === "openrouter" || (provider !== "openai" && isOpenRouterActive);
+
+  if (useOpenRouter && isOpenRouterActive) {
     return new OpenAI({
       apiKey: openRouterKey,
       baseURL: "https://openrouter.ai/api/v1",
@@ -34,7 +54,7 @@ export function getAiClient() {
     });
   }
 
-  // Fallback to direct OpenAI if only OPENAI_API_KEY is supplied
+  // Fallback to direct OpenAI if OPENAI_API_KEY is supplied
   return new OpenAI({
     apiKey: openAiKey || "dummy-key",
   });
@@ -366,49 +386,360 @@ export async function buildStructuredDocumentContext({
   }
 }
 
+type ChatMessageParam = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorMessage(err: any): string {
+  return String(
+    err?.error?.message || err?.message || err?.toString?.() || "Unknown AI error"
+  );
+}
+
+function extractErrorStatus(err: any, msg: string): number | null {
+  const num = Number(err?.status ?? err?.response?.status ?? err?.code);
+  if (!isNaN(num) && num >= 400 && num < 600) return num;
+  const m = msg.match(/\b(400|401|402|403|404|413|429|500|502|503|504)\b/);
+  return m ? Number(m[1]) : null;
+}
+
+export function extractAffordableTokens(msg: string): number | null {
+  const m =
+    msg.match(/can only afford\s+(\d+)/i) ||
+    msg.match(/afford\s+(\d+)\s+tokens/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return !isNaN(n) && n > 0 ? n : null;
+}
+
+export function isCreditOrUpgradeError(status: number | null, msg: string): boolean {
+  return (
+    status === 402 ||
+    /insufficient credits|more credits|fewer max_tokens|can only afford|add credits|openrouter\.ai\/settings\/credits|upgrade to a paid/i.test(
+      msg
+    )
+  );
+}
+
+function isRateLimitError(status: number | null, msg: string): boolean {
+  return (
+    status === 429 ||
+    /rate[- ]limit|too many requests|quota exceeded|temporarily rate-limited/i.test(msg)
+  );
+}
+
+function isContextTooLongError(status: number | null, msg: string): boolean {
+  return (
+    status === 413 ||
+    /context length|maximum context|too many tokens|prompt is too long|exceeds the maximum|reduce the length/i.test(
+      msg
+    )
+  );
+}
+
 /**
- * Robust chat completion with automated fallback to alternative models
- * Ensures million-user scale without quota crashes or single-provider outages.
+ * Compacts chat history and document context cleanly while preserving
+ * the system prompt and the user's current question intact.
+ */
+export function compactMessagesForBudget(
+  messages: ChatMessageParam[],
+  maxDocContextChars: number,
+  maxHistoryTurns: number
+): ChatMessageParam[] {
+  if (messages.length === 0) return messages;
+
+  const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
+  const rest = systemMsg ? messages.slice(1) : messages;
+  const lastUserMsg = rest[rest.length - 1];
+  const history = rest.slice(0, -1).slice(-maxHistoryTurns);
+
+  let updatedLastUser = lastUserMsg;
+  if (lastUserMsg && lastUserMsg.role === "user") {
+    const qMarker = "\n\nUSER QUESTION:";
+    const qIdx = lastUserMsg.content.lastIndexOf(qMarker);
+    if (qIdx !== -1) {
+      const ctxPart = lastUserMsg.content.slice(0, qIdx);
+      const qPart = lastUserMsg.content.slice(qIdx);
+      if (ctxPart.length > maxDocContextChars) {
+        updatedLastUser = {
+          ...lastUserMsg,
+          content: `${ctxPart.slice(0, maxDocContextChars)}\n...[truncated for compact context]${qPart}`,
+        };
+      }
+    } else if (lastUserMsg.content.length > maxDocContextChars) {
+      updatedLastUser = {
+        ...lastUserMsg,
+        content: lastUserMsg.content.slice(-maxDocContextChars),
+      };
+    }
+  }
+
+  return [
+    ...(systemMsg ? [systemMsg] : []),
+    ...history.map((m) => ({
+      ...m,
+      content: m.content.length > 2000 ? `${m.content.slice(0, 2000)}...` : m.content,
+    })),
+    ...(updatedLastUser ? [updatedLastUser] : []),
+  ];
+}
+
+/**
+ * Fetches active zero-cost `:free` OpenRouter text models and caches them
+ * alongside `openrouter/free` so fallback never relies on stale paid credits.
+ */
+async function getFreeOpenRouterCandidates(): Promise<string[]> {
+  if (cachedFreeModels && cachedFreeModels.expiresAt > Date.now()) {
+    return cachedFreeModels.models;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch("https://openrouter.ai/api/v1/models", {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const payload = await res.json().catch(() => null);
+      const data: any[] = Array.isArray(payload?.data) ? payload.data : [];
+
+      const freeScored = data
+        .filter((m) => {
+          const id = String(m?.id || "");
+          if (!id.endsWith(":free")) return false;
+          const promptCost = Number(m?.pricing?.prompt ?? 1);
+          const compCost = Number(m?.pricing?.completion ?? 1);
+          if (promptCost !== 0 || compCost !== 0) return false;
+          const modality = String(m?.architecture?.modality || "text->text");
+          return modality.includes("->text");
+        })
+        .map((m) => {
+          const id = String(m.id);
+          const ctx = Number(m?.context_length) || 0;
+          let score = ctx >= 64000 ? 30 : ctx >= 32000 ? 20 : 10;
+          if (/gemini|llama-3\.3|qwen|deepseek|mistral|gemma/i.test(id)) {
+            score += 25;
+          }
+          return { id, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6)
+        .map((m) => m.id);
+
+      const merged = Array.from(
+        new Set([OPENROUTER_FREE_ROUTER, ...freeScored, ...BACKUP_FREE_OPENROUTER_MODELS])
+      ).slice(0, 7);
+
+      cachedFreeModels = {
+        models: merged,
+        expiresAt: Date.now() + FREE_MODELS_CACHE_TTL_MS,
+      };
+      return merged;
+    }
+  } catch {
+    // Use router + static backup list cleanly if model catalog fetch times out
+  }
+
+  return BACKUP_FREE_OPENROUTER_MODELS;
+}
+
+async function attemptCompletionStream(
+  client: OpenAI,
+  params: {
+    model: string;
+    messages: ChatMessageParam[];
+    temperature: number;
+    max_tokens: number;
+  }
+) {
+  return client.chat.completions.create({
+    model: params.model,
+    messages: params.messages,
+    temperature: params.temperature,
+    max_tokens: params.max_tokens,
+    stream: true,
+  });
+}
+
+/**
+ * Robust chat completion with dynamic credit/token adaptation, automatic
+ * OpenRouter `:free` router fallback, and optional direct OpenAI fallback.
  */
 export async function createCompletionWithFallback({
   messages,
   temperature = 0.2,
-  max_tokens = 2000,
+  max_tokens = 1800,
 }: {
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  messages: ChatMessageParam[];
   temperature?: number;
   max_tokens?: number;
 }) {
-  const ai = getAiClient();
-  const modelsToTry = isOpenRouterActive ? FALLBACK_MODELS : ["gpt-3.5-turbo"];
-
   let lastError: any = null;
 
-  for (const model of modelsToTry) {
-    try {
-      console.log(`[AI] Attempting completion with model: ${model}`);
+  if (isOpenRouterActive) {
+    const openRouter = getAiClient("openrouter");
+    let currentMessages = messages;
+    let currentMaxTokens = max_tokens;
+    let paidCreditsExhausted = false;
 
-      // At most 3 models in fallback array as required by OpenRouter
-      const extraParams: any = {};
-      if (isOpenRouterActive) {
-        extraParams.models = modelsToTry.slice(0, 3);
+    // 1. Primary/cost-efficient OpenRouter models with adaptive 402 & context recovery
+    for (const model of FALLBACK_MODELS) {
+      if (paidCreditsExhausted) break;
+
+      try {
+        console.log(`[AI] Attempting OpenRouter model: ${model}`);
+        const response = await attemptCompletionStream(openRouter, {
+          model,
+          messages: currentMessages,
+          temperature,
+          max_tokens: currentMaxTokens,
+        });
+        return { response, activeModel: model };
+      } catch (err: any) {
+        const msg = getErrorMessage(err);
+        const status = extractErrorStatus(err, msg);
+        console.warn(`[AI] Model ${model} failed (${status ?? "err"}):`, msg);
+        lastError = err;
+
+        if (isCreditOrUpgradeError(status, msg)) {
+          const affordable = extractAffordableTokens(msg);
+          if (affordable !== null && affordable >= 240) {
+            const clampedTokens = Math.max(
+              220,
+              Math.min(currentMaxTokens - 100, Math.floor(affordable * 0.85))
+            );
+            const compactedMsgs = compactMessagesForBudget(
+              currentMessages,
+              affordable < 800 ? 10000 : 18000,
+              4
+            );
+            try {
+              console.log(
+                `[AI] Retrying ${model} with clamped max_tokens=${clampedTokens}`
+              );
+              const retryRes = await attemptCompletionStream(openRouter, {
+                model,
+                messages: compactedMsgs,
+                temperature,
+                max_tokens: clampedTokens,
+              });
+              return { response: retryRes, activeModel: model };
+            } catch (retryErr: any) {
+              const retryMsg = getErrorMessage(retryErr);
+              const retryStatus = extractErrorStatus(retryErr, retryMsg);
+              lastError = retryErr;
+              if (isCreditOrUpgradeError(retryStatus, retryMsg)) {
+                paidCreditsExhausted = true;
+              }
+            }
+          } else {
+            paidCreditsExhausted = true;
+          }
+        } else if (isContextTooLongError(status, msg)) {
+          const compactedMsgs = compactMessagesForBudget(currentMessages, 14000, 4);
+          currentMessages = compactedMsgs;
+          try {
+            const retryRes = await attemptCompletionStream(openRouter, {
+              model,
+              messages: compactedMsgs,
+              temperature,
+              max_tokens: Math.min(currentMaxTokens, 1200),
+            });
+            return { response: retryRes, activeModel: model };
+          } catch (retryErr: any) {
+            lastError = retryErr;
+          }
+        }
       }
+    }
 
-      const response = await ai.chat.completions.create({
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        stream: true,
-        ...extraParams,
-      });
+    // 2. Zero-credit OpenRouter `:free` tier router & discovered free models fallback
+    const freeCandidates = await getFreeOpenRouterCandidates();
+    let freeMessages = compactMessagesForBudget(messages, 20000, 6);
+    let freeMaxTokens = Math.min(max_tokens, 1400);
 
-      return { response, activeModel: model };
-    } catch (err: any) {
-      console.warn(`[AI] Model ${model} error:`, err?.message || err);
-      lastError = err;
+    for (const freeModel of freeCandidates) {
+      try {
+        console.log(`[AI] Attempting OpenRouter free fallback: ${freeModel}`);
+        const response = await attemptCompletionStream(openRouter, {
+          model: freeModel,
+          messages: freeMessages,
+          temperature,
+          max_tokens: freeMaxTokens,
+        });
+        return { response, activeModel: freeModel };
+      } catch (err: any) {
+        const msg = getErrorMessage(err);
+        const status = extractErrorStatus(err, msg);
+        console.warn(`[AI] Free model ${freeModel} failed (${status ?? "err"}):`, msg);
+        lastError = err;
+
+        if (isContextTooLongError(status, msg)) {
+          freeMessages = compactMessagesForBudget(messages, 9000, 2);
+          freeMaxTokens = Math.min(freeMaxTokens, 900);
+          try {
+            const retryRes = await attemptCompletionStream(openRouter, {
+              model: freeModel,
+              messages: freeMessages,
+              temperature,
+              max_tokens: freeMaxTokens,
+            });
+            return { response: retryRes, activeModel: freeModel };
+          } catch (retryErr: any) {
+            lastError = retryErr;
+          }
+        } else if (isRateLimitError(status, msg)) {
+          await sleep(450);
+        }
+      }
+    }
+  }
+
+  // 3. Direct OpenAI fallback (if OPENAI_API_KEY is configured cleanly)
+  if (isOpenAiActive) {
+    const openAiClient = getAiClient("openai");
+    const openAiModels = ["gpt-4o-mini", "gpt-3.5-turbo"];
+    const directMessages = compactMessagesForBudget(messages, 24000, 6);
+
+    for (const model of openAiModels) {
+      try {
+        console.log(`[AI] Attempting direct OpenAI fallback: ${model}`);
+        const response = await attemptCompletionStream(openAiClient, {
+          model,
+          messages: directMessages,
+          temperature,
+          max_tokens: Math.min(max_tokens, 1600),
+        });
+        return { response, activeModel: model };
+      } catch (err: any) {
+        console.warn(`[AI] Direct OpenAI ${model} failed:`, getErrorMessage(err));
+        lastError = err;
+      }
     }
   }
 
   throw lastError || new Error("All AI models in the fallback chain were unavailable.");
+}
+
+export function toFriendlyAiErrorMessage(err: any): string {
+  const msg = getErrorMessage(err);
+  const status = extractErrorStatus(err, msg);
+
+  if (isCreditOrUpgradeError(status, msg) || isRateLimitError(status, msg)) {
+    return "The AI tutor is currently experiencing high traffic. Please wait a few seconds and try again.";
+  }
+
+  if (isContextTooLongError(status, msg)) {
+    return "Your request was a bit too long for the AI to process at once. Please try a shorter question.";
+  }
+
+  return "Unable to reach the AI tutor right now. Please try again in a moment.";
 }

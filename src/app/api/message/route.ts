@@ -9,6 +9,7 @@ import {
   buildStructuredDocumentContext,
   createCompletionWithFallback,
   isAiConfigured,
+  toFriendlyAiErrorMessage,
 } from "@/lib/ai";
 import { parseDocument } from "@/lib/document-parser";
 import {
@@ -182,7 +183,7 @@ export async function POST(req: NextRequest) {
     // 2. Hybrid Per-Document Retrieval:
     // Every participating document is guaranteed structured context even if Pinecone has
     // partial or empty vectors for some files or the query is holistic ("compare/summarize").
-    const totalContextBudget = isPro ? 72000 : 28000;
+    const totalContextBudget = isPro ? 44000 : 22000;
     const maxCharsPerDoc = Math.max(
       4500,
       Math.floor(totalContextBudget / activeFiles.length)
@@ -487,7 +488,7 @@ ${singlePageConstraint}
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
-      max_tokens: isPro ? 3200 : 1400,
+      max_tokens: isPro ? 1800 : 1100,
     });
 
     console.log(
@@ -554,9 +555,11 @@ ${singlePageConstraint}
     return new StreamingTextResponse(stream, { headers: responseHeaders });
   } catch (error: any) {
     console.error("[message/route] Error:", error);
-    return new Response(
-      `Error generating AI response: ${error?.message || "Internal server error"}`,
-      { status: 500 }
-    );
+    const status = typeof error?.status === "number" ? error.status : 500;
+    const isUpstreamLimit =
+      status === 402 || status === 429 || status === 413 || status >= 500;
+    return new Response(toFriendlyAiErrorMessage(error), {
+      status: isUpstreamLimit ? 503 : status,
+    });
   }
 }

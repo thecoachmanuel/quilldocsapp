@@ -34,6 +34,23 @@ interface Props {
   isExpanded?: boolean;
   children: ReactNode;
 }
+
+const FRIENDLY_AI_ERROR =
+  "The AI tutor is currently experiencing high traffic. Please wait a few seconds and try again.";
+
+function sanitizeChatErrorMessage(raw: unknown): string {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (
+    !trimmed ||
+    /openrouter|402|add credits|more credits|fewer max_tokens|upgrade to a paid|<!doctype|<html/i.test(
+      trimmed
+    )
+  ) {
+    return FRIENDLY_AI_ERROR;
+  }
+  return trimmed;
+}
+
 export const ChatContextProvider = ({
   fileId,
   fileIds,
@@ -65,7 +82,7 @@ export const ChatContextProvider = ({
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");
-        throw new Error(errText || "Failed to send message");
+        throw new Error(sanitizeChatErrorMessage(errText));
       }
 
       const multiIdsHeader = response.headers.get("X-Quill-Multi-Docs");
@@ -220,7 +237,7 @@ export const ChatContextProvider = ({
       }
       toast({
         title: "Failed to get AI response",
-        description: err?.message || "Please try again in a moment.",
+        description: sanitizeChatErrorMessage(err?.message),
         variant: "destructive",
       });
     },

@@ -484,7 +484,12 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                   }
                 }
 
-                if (lang === "json") {
+                if (
+                  lang === "json" ||
+                  (!lang &&
+                    (codeString.trimStart().startsWith("{") ||
+                      codeString.trimStart().startsWith("[")))
+                ) {
                   const quizData = parseQuizData(codeString);
                   if (quizData) return <InteractiveQuiz data={quizData} />;
                   const flashData = parseFlashcardsData(codeString);
@@ -522,7 +527,7 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                               childProps.children || ""
                             ).replace(/\n$/, "");
 
-                            if (lang && renderInteractiveBlock(lang, codeString)) {
+                            if (renderInteractiveBlock(lang, codeString)) {
                               return <>{children}</>;
                             }
                           }
@@ -533,7 +538,13 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                           const lang = match ? match[1].toLowerCase() : "";
                           const codeString = String(children || "").replace(/\n$/, "");
 
-                          if (!inline && lang) {
+                          if (
+                            !inline &&
+                            (lang ||
+                              (!className &&
+                                (codeString.trimStart().startsWith("{") ||
+                                  codeString.trimStart().startsWith("["))))
+                          ) {
                             const interactiveWidget = renderInteractiveBlock(
                               lang,
                               codeString

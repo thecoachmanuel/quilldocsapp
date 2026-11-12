@@ -9,6 +9,7 @@ export interface QuizQuestion {
 export interface QuizData {
   title: string;
   questions: QuizQuestion[];
+  hasAnswerKey?: boolean;
 }
 
 export interface FlashcardItem {
@@ -222,6 +223,51 @@ export function detectStreamingInteractiveFence(rawText: string): {
   };
 }
 
+function extractOptionsList(rawOptions: any): string[] {
+  if (Array.isArray(rawOptions)) {
+    return rawOptions
+      .map((o: any) => {
+        if (typeof o === "string" || typeof o === "number") {
+          return cleanOptionPrefix(String(o).trim());
+        }
+        if (o && typeof o === "object") {
+          const text = o.text ?? o.label ?? o.value ?? o.option ?? o.content ?? "";
+          return cleanOptionPrefix(String(text).trim());
+        }
+        return "";
+      })
+      .filter(Boolean);
+  }
+
+  if (rawOptions && typeof rawOptions === "object") {
+    return Object.entries(rawOptions)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, val]) => cleanOptionPrefix(String(val ?? "").trim()))
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function makeUniqueId(
+  rawId: any,
+  idx: number,
+  seen: Set<string>
+): string | number {
+  const base =
+    rawId !== undefined && rawId !== null && String(rawId).trim() !== ""
+      ? rawId
+      : idx + 1;
+  const key = String(base);
+  if (!seen.has(key)) {
+    seen.add(key);
+    return base;
+  }
+  const unique = `${key}-${idx + 1}`;
+  seen.add(unique);
+  return unique;
+}
+
 /**
  * Parses structured JSON quiz or falls back to parsing Markdown questions.
  */
@@ -237,20 +283,30 @@ export function parseQuizData(raw: string): QuizData | null {
     ? fenceMatch[1].trim()
     : trimmed.replace(/^```[\w:-]*\s*\n?/, "").trim();
 
-  const parsed = safeJsonParse(candidateJsonStr);
+  const parsedRaw = safeJsonParse(candidateJsonStr);
+  const parsed = Array.isArray(parsedRaw)
+    ? { questions: parsedRaw }
+    : parsedRaw?.quiz && Array.isArray(parsedRaw.quiz.questions)
+      ? parsedRaw.quiz
+      : parsedRaw?.data && Array.isArray(parsedRaw.data.questions)
+        ? parsedRaw.data
+        : parsedRaw;
+
   if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+    const seenIds = new Set<string>();
     const questions: QuizQuestion[] = parsed.questions
       .map((q: any, idx: number) => {
+        if (!q || typeof q !== "object") return null;
         const questionText = String(q.question || q.prompt || "").trim();
-        const rawOptions: string[] = Array.isArray(q.options)
-          ? q.options.map((o: any) => cleanOptionPrefix(String(o).trim()))
-          : [];
+        const rawOptions = extractOptionsList(
+          q.options ?? q.choices ?? q.answers
+        );
         if (!questionText || rawOptions.length < 2) return null;
 
         const correctIdx = resolveCorrectOptionIndex(q, rawOptions);
 
         return {
-          id: q.id ?? idx + 1,
+          id: makeUniqueId(q.id, idx, seenIds),
           question: questionText,
           options: rawOptions,
           correctIndex: correctIdx,
@@ -265,6 +321,7 @@ export function parseQuizData(raw: string): QuizData | null {
       return {
         title: String(parsed.title || "Interactive Practice Quiz").trim(),
         questions,
+        hasAnswerKey: true,
       };
     }
   }
@@ -273,11 +330,41 @@ export function parseQuizData(raw: string): QuizData | null {
 }
 
 function parseMarkdownQuiz(text: string): QuizData | null {
-  const questionBlocks = text.split(
-    /(?=(?:^|\n)(?:###?\s*)?(?:\*{0,2}Question\s*\d+|\d+\.\s*\*{0,2}(?:Question|Which|What|How|Calculate|Identify|Define|In|According)))/i
+  // Check if there is a trailing Answer Key section so we can attach answers cleanly
+  const keySectionMatch = text.match(
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:Answer\s*Key|Answers|Solutions)\s*:?\*{0,2}\s*\n([\s\S]+)$/i
+  );
+  const quizBody = keySectionMatch
+    ? text.slice(0, keySectionMatch.index).trim()
+    : text;
+
+  const keyMap = new Map<number, { index: number; explanation?: string }>();
+  if (keySectionMatch) {
+    const keyLines = keySectionMatch[1].split("\n");
+    for (const rawLine of keyLines) {
+      const m = rawLine
+        .trim()
+        .match(
+          /^(?:Q(?:uestion)?\s*)?(\d+)\s*[\.\):\-]\s*\(?([A-Fa-f]|[1-6])\)?(?:[\.\)\s:\-–—]+(.*))?$/i
+        );
+      if (m) {
+        const qNum = parseInt(m[1], 10);
+        const ansIdx = parseLetterToIndex(m[2]);
+        if (ansIdx !== null) {
+          keyMap.set(qNum, {
+            index: ansIdx,
+            explanation: m[3]?.trim() || undefined,
+          });
+        }
+      }
+    }
+  }
+
+  const questionBlocks = quizBody.split(
+    /(?=(?:^|\n)(?:###?\s*)?(?:\*{0,2}(?:Question|Q)\s*\d+[:.\)\s*]|\*{0,2}\d+[\.\)]\s+))/i
   );
   const questions: QuizQuestion[] = [];
-  let sawExplicitAnswer = false;
+  let sawExplicitAnswer = keyMap.size > 0;
 
   for (const block of questionBlocks) {
     const lines = block
@@ -288,24 +375,28 @@ function parseMarkdownQuiz(text: string): QuizData | null {
 
     const firstLine = lines[0]
       .replace(/^#{1,4}\s*/, "")
-      .replace(/^\*{0,2}Question\s*\d+[:.]?\*{0,2}\s*/i, "")
-      .replace(/^\d+[\.\)]\s*/, "")
+      .replace(/^\*{0,2}(?:Question|Q)\s*\d+[:.]?\*{0,2}\s*/i, "")
+      .replace(/^\*{0,2}\d+[\.\)]\*{0,2}\s*/, "")
       .trim();
 
+    // Support wrapped multi-line question text before the first A) / B) option
+    const promptParts: string[] = [firstLine];
     const options: string[] = [];
     let correctIdx = -1;
     let explanation = "";
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
-      const optMatch = line.match(/^[-\*•]?\s*([A-Fa-f])[\.\)]\s*(.*)$/);
+      const optMatch = line.match(
+        /^[-\*•]?\s*\*{0,2}\(?([A-Fa-f])\)?[\.\)]\*{0,2}\s*(.*)$/
+      );
       if (optMatch) {
         options.push(optMatch[2].trim());
         continue;
       }
 
       const ansMatch = line.match(
-        /(?:\*{0,2}Correct Answer|\*{0,2}Answer)[:\s*]+([A-Fa-f]|\d+)/i
+        /^(?:[-*•]\s*)?(?:\*{0,2}Correct(?:\s+Answer|\s+Option)?|\*{0,2}Answer)\*{0,2}\s*[:\-]\s*\*{0,2}\(?([A-Fa-f]|[1-6])\)?/i
       );
       if (ansMatch) {
         sawExplicitAnswer = true;
@@ -315,7 +406,7 @@ function parseMarkdownQuiz(text: string): QuizData | null {
       }
 
       const expMatch = line.match(
-        /(?:\*{0,2}Explanation|\*{0,2}Solution|\*{0,2}Rationale)[:\s*]+(.*)$/i
+        /^(?:[-*•]\s*)?(?:\*{0,2}Explanation|\*{0,2}Solution|\*{0,2}Rationale)\*{0,2}\s*[:\-]\s*(.*)$/i
       );
       if (expMatch) {
         explanation = expMatch[1].trim();
@@ -324,27 +415,46 @@ function parseMarkdownQuiz(text: string): QuizData | null {
 
       if (explanation) {
         explanation += ` ${line}`;
+      } else if (options.length === 0) {
+        promptParts.push(line);
       }
     }
 
-    if (firstLine && options.length >= 2) {
+    const qNum = questions.length + 1;
+    const fromKey = keyMap.get(qNum);
+    if (correctIdx === -1 && fromKey && fromKey.index < options.length) {
+      correctIdx = fromKey.index;
+      if (!explanation && fromKey.explanation) {
+        explanation = fromKey.explanation;
+      }
+    }
+
+    const fullQuestion = promptParts.join(" ").trim();
+    if (fullQuestion && options.length >= 2) {
       questions.push({
-        id: questions.length + 1,
-        question: firstLine,
+        id: qNum,
+        question: fullQuestion,
         options,
         correctIndex:
-          correctIdx >= 0 && correctIdx < options.length ? correctIdx : 0,
+          correctIdx >= 0 && correctIdx < options.length
+            ? correctIdx
+            : sawExplicitAnswer
+              ? 0
+              : -1,
         explanation:
           explanation ||
-          "Review the referenced document section for the complete explanation.",
+          (sawExplicitAnswer
+            ? "Review the referenced document section for the complete explanation."
+            : ""),
       });
     }
   }
 
-  if (questions.length >= 2 && sawExplicitAnswer) {
+  if (questions.length >= 2) {
     return {
       title: "Document Practice Quiz",
       questions,
+      hasAnswerKey: sawExplicitAnswer,
     };
   }
 
@@ -360,17 +470,27 @@ export function parseFlashcardsData(raw: string): FlashcardsData | null {
 
   const fenceMatch =
     trimmed.match(
-      /```(?:flashcards|flashcard|json:flashcards|cards|json)?\s*([\s\S]*?)```/i
+      /```(?:flashcards|flashcard|json:flashcards|flashcards-json|cards|json)?\s*([\s\S]*?)```/i
     ) || trimmed.match(/<flashcards>([\s\S]*?)<\/flashcards>/i);
 
   const candidateJsonStr = fenceMatch
     ? fenceMatch[1].trim()
     : trimmed.replace(/^```[\w:-]*\s*\n?/, "").trim();
 
-  const parsed = safeJsonParse(candidateJsonStr);
+  const parsedRaw = safeJsonParse(candidateJsonStr);
+  const parsed = Array.isArray(parsedRaw)
+    ? { cards: parsedRaw }
+    : parsedRaw?.flashcards && Array.isArray(parsedRaw.flashcards.cards)
+      ? parsedRaw.flashcards
+      : parsedRaw?.data && Array.isArray(parsedRaw.data.cards)
+        ? parsedRaw.data
+        : parsedRaw;
+
   if (parsed && Array.isArray(parsed.cards) && parsed.cards.length > 0) {
+    const seenIds = new Set<string>();
     const cards: FlashcardItem[] = parsed.cards
       .map((c: any, idx: number) => {
+        if (!c || typeof c !== "object") return null;
         const front = String(
           c.front || c.question || c.term || c.prompt || ""
         ).trim();
@@ -380,7 +500,7 @@ export function parseFlashcardsData(raw: string): FlashcardsData | null {
         const hint = c.hint ? String(c.hint).trim() : undefined;
         if (!front || !back) return null;
         return {
-          id: c.id ?? idx + 1,
+          id: makeUniqueId(c.id, idx, seenIds),
           front,
           back,
           hint,
@@ -401,7 +521,7 @@ export function parseFlashcardsData(raw: string): FlashcardsData | null {
 
 function parseMarkdownFlashcards(text: string): FlashcardsData | null {
   const cardBlocks = text.split(
-    /(?=(?:^|\n)(?:###?\s*)?(?:\*{0,2}Card\s*\d+|\*{0,2}Flashcard\s*\d+|\d+\.\s*\*{0,2}(?:Card|Flashcard)))/i
+    /(?=(?:^|\n)(?:###?\s*)?(?:[-*•]\s*)?(?:\*{0,2}(?:Card|Flashcard)\s*\d+|\d+[\.\)]\s*\*{0,2}(?:Card|Flashcard|Front|Term|Question)|\*{0,2}(?:Front|Term)\*{0,2}\s*:))/i
   );
   const cards: FlashcardItem[] = [];
 

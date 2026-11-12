@@ -429,7 +429,7 @@ export async function POST(req: NextRequest) {
     - When discussing hypothesis testing, clearly break down: (1) Null Hypothesis ($H_0$) & Alternative Hypothesis ($H_a$), (2) Test Statistic & degrees of freedom, (3) p-value / critical threshold, and (4) Plain-language conclusion grounded in the document context.
 - Interactive Questions & Practice Quizzes:
   * When the user requests questions, practice tests, or quizzes (e.g. "quiz me", "test me", "give me questions on this", "practice questions"):
-    - ALWAYS format the questions inside a \`\`\`quiz fenced code block in JSON format with a title, array of questions with options, correctIndex (0-based integer of correct option), and detailed explanation:
+    - ALWAYS format the questions inside a \`\`\`quiz fenced code block in JSON format with a title, array of questions with 4 well-crafted options, correctIndex (0-based integer of correct option), and detailed explanation:
 \`\`\`quiz
 {
   "title": "Practice Quiz: [Document / Topic]",
@@ -438,13 +438,14 @@ export async function POST(req: NextRequest) {
       "id": 1,
       "question": "Question text here?",
       "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Detailed explanation with formulas and reasoning."
+      "correctIndex": 2,
+      "explanation": "Detailed step-by-step explanation with formulas and reasoning."
     }
   ]
 }
 \`\`\`
-    - The interactive UI will automatically render this as a multiple-choice practice quiz where the user picks options, submits for automated scoring, and gets answers with explanations.
+    - Vary \`correctIndex\` naturally across \`0\`, \`1\`, \`2\`, and \`3\` across questions (never place all correct answers at index \`0\`), craft plausible distractors targeting common misconceptions, and escape backslashes properly inside JSON strings (e.g. \`"$\\\\frac{a}{b}$"\`).
+    - The interactive UI will automatically render this as a multiple-choice practice quiz where the user picks options, submits for automated scoring, and gets answers with explanations and AI tutor review.
 - Interactive Study Flashcards:
   * When the user requests flashcards or key terms to practice (e.g. "make flashcards", "create flashcards", "study cards"):
     - ALWAYS format the flashcards inside a \`\`\`flashcards fenced code block in JSON format:
@@ -454,14 +455,19 @@ export async function POST(req: NextRequest) {
   "cards": [
     {
       "id": 1,
-      "front": "Concept / Question / Term prompt",
-      "back": "Detailed definition, answer, or explanation",
-      "hint": "Optional hint to aid recall"
+      "front": "Clear, testable concept, calculation, or recall question prompt",
+      "back": "Concise, canonical answer with formula or key definition",
+      "hint": "Optional memory cue to aid active recall"
     }
   ]
 }
 \`\`\`
-    - The interactive UI will automatically render this as a 3D flip card deck where the user can practice, flip for answers, and track mastered vs review cards.`;
+    - The interactive UI will automatically render this as an active-recall flashcard deck where the user can type answers, check correctness, track score, flip for solutions, and request full AI grading.
+- Evaluating User Quiz & Flashcard Submissions:
+  * When the user sends a \`QUIZ SUBMISSION\` or \`FLASHCARD SUBMISSION FOR AI GRADING & SOLUTIONS\` message containing their answers:
+    - Grade every item accurately and fairly (for typed flashcard responses, accept equivalent phrasing, valid unit conversions, or mathematically equivalent forms).
+    - Open with a clear **Final Score** (\`X / Y\` and percentage) and a structured breakdown showing each item's status (**Correct** vs **Incorrect / Needs Review**).
+    - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.`;
 
     const systemPrompt = isMultiDoc
       ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
@@ -525,10 +531,15 @@ ${singlePageConstraint}
       },
     ];
 
+    const isPracticeRequest =
+      /\b(quiz|test me|questions?|mcq|flashcards?|study cards|quiz submission|flashcard submission)\b/i.test(
+        message
+      );
+
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
-      max_tokens: isPro ? 1800 : 1100,
+      max_tokens: isPracticeRequest ? (isPro ? 2800 : 2000) : isPro ? 1800 : 1100,
     });
 
     console.log(

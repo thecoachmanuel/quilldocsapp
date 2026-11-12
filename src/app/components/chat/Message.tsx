@@ -7,10 +7,14 @@ import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import InteractiveQuiz from "./InteractiveQuiz";
 import InteractiveFlashcards from "./InteractiveFlashcards";
-import { parseQuizData, parseFlashcardsData } from "@/lib/interactive-content";
+import {
+  parseQuizData,
+  parseFlashcardsData,
+  detectStreamingInteractiveFence,
+} from "@/lib/interactive-content";
 import { format } from "date-fns";
-import { forwardRef, useState } from "react";
-import { Check, Copy, FileText } from "lucide-react";
+import { Children, forwardRef, isValidElement, useState } from "react";
+import { Check, Copy, FileText, Loader2 } from "lucide-react";
 import { dispatchPageJump } from "@/lib/page-jump";
 import { copyMessageForWord } from "@/lib/word-clipboard";
 
@@ -427,77 +431,131 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
             )}
           >
             {(() => {
-              if (!message.isUserMessage && typeof formattedText === "string") {
-                if (!formattedText.includes("```quiz") && !formattedText.includes("```json:quiz")) {
-                  const standaloneQuiz = parseQuizData(formattedText);
-                  if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
-                    return <InteractiveQuiz data={standaloneQuiz} />;
-                  }
+              if (typeof formattedText !== "string") {
+                return formattedText;
+              }
+
+              const streamingFence = !message.isUserMessage
+                ? detectStreamingInteractiveFence(formattedText)
+                : { type: null, prefixText: "" };
+
+              if (
+                !message.isUserMessage &&
+                !streamingFence.type &&
+                !formattedText.includes("```")
+              ) {
+                const standaloneQuiz = parseQuizData(formattedText);
+                if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
+                  return <InteractiveQuiz data={standaloneQuiz} />;
                 }
-                if (!formattedText.includes("```flashcards") && !formattedText.includes("```json:flashcards")) {
-                  const standaloneFlashcards = parseFlashcardsData(formattedText);
-                  if (standaloneFlashcards && standaloneFlashcards.cards.length >= 2) {
-                    return <InteractiveFlashcards data={standaloneFlashcards} />;
-                  }
+                const standaloneFlashcards = parseFlashcardsData(formattedText);
+                if (standaloneFlashcards && standaloneFlashcards.cards.length >= 2) {
+                  return <InteractiveFlashcards data={standaloneFlashcards} />;
                 }
               }
 
-              if (typeof formattedText === "string") {
-                return (
-                  <ReactMarkdown
-                    className={cn(
-                      "prose prose-sm sm:prose-base max-w-full min-w-0 break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_a]:break-all [&_img]:max-w-full",
-                      {
-                        "text-zinc-50 prose-invert": message.isUserMessage,
-                      }
-                    )}
-                    remarkPlugins={[remarkMath, remarkGfm]}
-                    rehypePlugins={[rehypeKatex]}
-                    components={{
-                      code: ({ node, inline, className, children, ...props }: any) => {
-                        const match = /language-(\w+)/.exec(className || "");
-                        const lang = match ? match[1].toLowerCase() : "";
-                        const codeString = String(children || "").replace(/\n$/, "");
+              const markdownSource = streamingFence.type
+                ? streamingFence.prefixText
+                : formattedText;
 
-                        if (!inline && (lang === "quiz" || lang === "quiz-json")) {
-                          const quizData = parseQuizData(codeString);
-                          if (quizData) {
-                            return <InteractiveQuiz data={quizData} />;
+              const renderInteractiveBlock = (
+                lang: string,
+                codeString: string
+              ) => {
+                if (
+                  lang === "quiz" ||
+                  lang === "quiz-json" ||
+                  lang === "json:quiz"
+                ) {
+                  const quizData = parseQuizData(codeString);
+                  if (quizData) return <InteractiveQuiz data={quizData} />;
+                }
+
+                if (
+                  lang === "flashcards" ||
+                  lang === "flashcard" ||
+                  lang === "cards" ||
+                  lang === "flashcards-json" ||
+                  lang === "json:flashcards"
+                ) {
+                  const flashcardsData = parseFlashcardsData(codeString);
+                  if (flashcardsData) {
+                    return <InteractiveFlashcards data={flashcardsData} />;
+                  }
+                }
+
+                if (lang === "json") {
+                  const quizData = parseQuizData(codeString);
+                  if (quizData) return <InteractiveQuiz data={quizData} />;
+                  const flashData = parseFlashcardsData(codeString);
+                  if (flashData) return <InteractiveFlashcards data={flashData} />;
+                }
+
+                return null;
+              };
+
+              return (
+                <>
+                  {markdownSource ? (
+                    <ReactMarkdown
+                      className={cn(
+                        "prose prose-sm sm:prose-base max-w-full min-w-0 break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_a]:break-all [&_img]:max-w-full",
+                        {
+                          "text-zinc-50 prose-invert": message.isUserMessage,
+                        }
+                      )}
+                      remarkPlugins={[remarkMath, remarkGfm]}
+                      rehypePlugins={[rehypeKatex]}
+                      components={{
+                        pre: ({ children, ...props }) => {
+                          const firstChild = Children.toArray(children)[0];
+                          if (isValidElement(firstChild)) {
+                            const childProps = firstChild.props as {
+                              className?: string;
+                              children?: unknown;
+                            };
+                            const match = /language-([\w:-]+)/.exec(
+                              childProps.className || ""
+                            );
+                            const lang = match ? match[1].toLowerCase() : "";
+                            const codeString = String(
+                              childProps.children || ""
+                            ).replace(/\n$/, "");
+
+                            if (lang && renderInteractiveBlock(lang, codeString)) {
+                              return <>{children}</>;
+                            }
                           }
-                        }
+                          return <pre {...props}>{children}</pre>;
+                        },
+                        code: ({ node, inline, className, children, ...props }: any) => {
+                          const match = /language-([\w:-]+)/.exec(className || "");
+                          const lang = match ? match[1].toLowerCase() : "";
+                          const codeString = String(children || "").replace(/\n$/, "");
 
-                        if (
-                          !inline &&
-                          (lang === "flashcards" ||
-                            lang === "flashcard" ||
-                            lang === "cards")
-                        ) {
-                          const flashcardsData = parseFlashcardsData(codeString);
-                          if (flashcardsData) {
-                            return <InteractiveFlashcards data={flashcardsData} />;
+                          if (!inline && lang) {
+                            const interactiveWidget = renderInteractiveBlock(
+                              lang,
+                              codeString
+                            );
+                            if (interactiveWidget) {
+                              return interactiveWidget;
+                            }
                           }
-                        }
 
-                        if (!inline && lang === "json") {
-                          const quizData = parseQuizData(codeString);
-                          if (quizData) return <InteractiveQuiz data={quizData} />;
-                          const flashData = parseFlashcardsData(codeString);
-                          if (flashData) return <InteractiveFlashcards data={flashData} />;
-                        }
-
-                        return (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        );
-                      },
-                      table: ({ children, ...props }) => (
-                        <div className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-zinc-200/90 bg-white shadow-2xs">
-                          <table className="w-full border-collapse text-left text-xs sm:text-sm font-sans" {...props}>
-                            {children}
-                          </table>
-                        </div>
-                      ),
+                          return (
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          );
+                        },
+                        table: ({ children, ...props }) => (
+                          <div className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-zinc-200/90 bg-white shadow-sm">
+                            <table className="w-full border-collapse text-left text-xs sm:text-sm font-sans" {...props}>
+                              {children}
+                            </table>
+                          </div>
+                        ),
                       th: ({ children, ...props }) => (
                         <th className="border-b border-zinc-200 bg-zinc-100/90 px-3 py-2 font-bold text-zinc-900 text-xs sm:text-sm" {...props}>
                           {children}
@@ -670,11 +728,26 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                   },
                 }}
               >
-                {formattedText}
+                {markdownSource}
               </ReactMarkdown>
-                );
-              }
-              return formattedText;
+                  ) : null}
+                  {streamingFence.type ? (
+                    <div className="not-prose my-2.5 flex items-center gap-3 rounded-xl border border-blue-200/80 bg-blue-50/70 px-4 py-3.5 text-sm font-sans text-zinc-700 shadow-sm">
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" />
+                      <div>
+                        <p className="font-semibold text-zinc-900">
+                          {streamingFence.type === "quiz"
+                            ? "Designing your interactive practice quiz..."
+                            : "Preparing your interactive study flashcards..."}
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          Formatting questions, options, and solutions
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              );
             })()}
 
             {/* Compact Multi-Document Sources Key */}

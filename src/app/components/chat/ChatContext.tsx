@@ -11,6 +11,7 @@ export interface AutoMultiDocInfo {
 
 type StreamResponse = {
   addMessage: () => void;
+  submitPrompt: (text: string) => void;
   message: string;
   handleInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
   setInputValue: (value: string) => void;
@@ -20,6 +21,7 @@ type StreamResponse = {
 };
 export const ChatContext = createContext<StreamResponse>({
   addMessage: () => {},
+  submitPrompt: () => {},
   message: "",
   handleInputChange: () => {},
   setInputValue: () => {},
@@ -252,15 +254,21 @@ export const ChatContextProvider = ({
     setMessage(e.target.value);
   };
 
+  const submitPrompt = (text: string) => {
+    const clean = text.trim();
+    if (!clean || isLoading) return;
+    sendMessage({ message: clean });
+  };
+
   const addMessage = () => {
-    if (!message.trim() || isLoading) return;
-    sendMessage({ message: message.trim() });
+    submitPrompt(message);
   };
 
   return (
     <ChatContext.Provider
       value={{
         addMessage,
+        submitPrompt,
         message,
         handleInputChange,
         setInputValue: setMessage,

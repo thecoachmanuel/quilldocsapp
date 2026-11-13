@@ -59,11 +59,11 @@ const NUMBER_WORDS: Record<string, number> = {
 const NUM_TOKEN_PATTERN =
   "(?:\\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\\s]five)?|forty(?:[-\\s]five)?|fifty)";
 
-export const MAX_EXAM_MCQ = 12;
+export const MAX_EXAM_MCQ = 20;
 export const MAX_EXAM_THEORY = 4;
-export const MAX_EXAM_TOTAL = 12;
-export const MAX_QUIZ_QUESTIONS = 10;
-export const MAX_FLASHCARDS = 10;
+export const MAX_EXAM_TOTAL = 20;
+export const MAX_QUIZ_QUESTIONS = 20;
+export const MAX_FLASHCARDS = 12;
 
 function parseNumberToken(raw: string | undefined): number | null {
   if (!raw) return null;

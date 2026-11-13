@@ -157,7 +157,7 @@ export const ExamBuilderModal: React.FC<ExamBuilderModalProps> = ({
                 />
               </div>
               <div className="flex flex-wrap gap-1">
-                {[0, 5, 8, 10, 12].map((n) => (
+                {[0, 5, 10, 15, 20].map((n) => (
                   <button
                     key={n}
                     type="button"

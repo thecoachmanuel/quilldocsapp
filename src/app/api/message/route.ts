@@ -622,8 +622,8 @@ ${singlePageConstraint}
       : 0;
 
     const dynamicPracticeMaxTokens = Math.min(
-      isPro ? 3200 : 2800,
-      Math.max(1500, 400 + estMcqCount * 105 + estTheoryCount * 200)
+      isPro ? 4400 : 3800,
+      Math.max(1600, 400 + estMcqCount * 135 + estTheoryCount * 240)
     );
 
     let countTurnHint = "";
@@ -751,13 +751,19 @@ ${singlePageConstraint}
           };
 
           try {
-            let pass1Raw = await readStreamToString(response, (acc) => {
-              if (!openedFence && /^\s*(?:```|\{)/i.test(acc)) {
-                ensureOpenedFence();
-              }
-            });
+            let pass1Raw = "";
+            let streamReadErr: any = null;
+            try {
+              pass1Raw = await readStreamToString(response, (acc) => {
+                if (!openedFence && /^\s*(?:```|\{)/i.test(acc)) {
+                  ensureOpenedFence();
+                }
+              });
+            } catch (readErr) {
+              streamReadErr = readErr;
+            }
 
-            if (!pass1Raw.trim()) {
+            if (!pass1Raw.trim() || streamReadErr) {
               const retryCompletion = await createCompletionWithFallback({
                 messages,
                 temperature: isPro ? 0.15 : 0.2,

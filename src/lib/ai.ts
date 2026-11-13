@@ -75,10 +75,8 @@ const BACKUP_FREE_OPENROUTER_MODELS = [
   OPENROUTER_FREE_ROUTER,
   "google/gemma-4-26b-a4b-it:free",
   "google/gemma-4-31b-it:free",
-  "baidu/ernie-5.5-flash-preview:free",
-  "nvidia/nemotron-3.5-lightning:free",
-  "nvidia/nemotron-3.5-super-vl:free",
   "cohere/north-mini-code:free",
+  "liquid/lfm-3-1.7b:free",
 ];
 
 let cachedFreeModels: { models: string[]; expiresAt: number } | null = null;
@@ -620,7 +618,7 @@ async function getFreeOpenRouterCandidates(): Promise<string[]> {
         .filter((m) => {
           const id = String(m?.id || "");
           if (!id.endsWith(":free")) return false;
-          if (/r1|qwq|thinking|reasoning/i.test(id)) return false;
+          if (/r1|qwq|thinking|reasoning|nemotron|ernie/i.test(id)) return false;
           const promptCost = Number(m?.pricing?.prompt ?? 1);
           const compCost = Number(m?.pricing?.completion ?? 1);
           if (promptCost !== 0 || compCost !== 0) return false;
@@ -936,7 +934,6 @@ export async function createCompletionWithFallback({
   const openRouterKeys = getOpenRouterKeys();
   const geminiKeys = getGeminiKeys();
   const openAiKeys = getOpenAiKeys();
-  const fallbackDeadlineAt = Date.now() + 42000;
 
   if (openRouterKeys.length > 0) {
     let currentMessages = messages;
@@ -1035,7 +1032,13 @@ export async function createCompletionWithFallback({
     }
 
     // 2. Zero-credit OpenRouter `:free` router & models across ALL OpenRouter keys
-    const freeCandidates = await getFreeOpenRouterCandidates();
+    // If Gemini keys are configured, keep OpenRouter `:free` fast (<=9s) so Gemini has plenty of Vercel budget.
+    const freeCandidates =
+      geminiKeys.length > 0
+        ? [OPENROUTER_FREE_ROUTER, "google/gemma-4-26b-a4b-it:free"]
+        : await getFreeOpenRouterCandidates();
+    const freeDeadlineAt =
+      geminiKeys.length > 0 ? Date.now() + 9000 : Date.now() + 36000;
     const freeRes = await runProviderModelFallback({
       provider: "openrouter",
       providerLabel: "OpenRouter free",
@@ -1046,8 +1049,8 @@ export async function createCompletionWithFallback({
       maxTokens: Math.min(max_tokens, 5000),
       compactContextChars: 20000,
       compactHistoryTurns: 6,
-      attemptTimeoutMs: 14000,
-      deadlineAt: fallbackDeadlineAt,
+      attemptTimeoutMs: geminiKeys.length > 0 ? 7000 : 12000,
+      deadlineAt: freeDeadlineAt,
     });
     if (freeRes.response && freeRes.activeModel) {
       return { response: freeRes.response, activeModel: freeRes.activeModel };
@@ -1064,9 +1067,10 @@ export async function createCompletionWithFallback({
       models: GEMINI_FREE_MODELS,
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 6000),
+      maxTokens: Math.min(8192, Math.max(max_tokens * 2, 4096)),
       compactContextChars: 36000,
       compactHistoryTurns: 8,
+      attemptTimeoutMs: 36000,
     });
     if (geminiRes.response && geminiRes.activeModel) {
       return {

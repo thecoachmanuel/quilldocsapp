@@ -722,9 +722,20 @@ ${singlePageConstraint}
             }
           };
 
+          keepaliveTimer = setInterval(() => {
+            try {
+              if (!openedFence) {
+                controller.enqueue(encoder.encode(" "));
+              }
+            } catch {
+              stopKeepalive();
+            }
+          }, 8000);
+
           const ensureOpenedFence = () => {
             if (openedFence) return;
             openedFence = true;
+            stopKeepalive();
             controller.enqueue(
               encoder.encode(`\`\`\`${requestedCounts.kind}\n`)
             );
@@ -740,11 +751,36 @@ ${singlePageConstraint}
           };
 
           try {
-            const pass1Raw = await readStreamToString(response, (acc) => {
+            let pass1Raw = await readStreamToString(response, (acc) => {
               if (!openedFence && /^\s*(?:```|\{)/i.test(acc)) {
                 ensureOpenedFence();
               }
             });
+
+            if (!pass1Raw.trim()) {
+              const retryCompletion = await createCompletionWithFallback({
+                messages,
+                temperature: isPro ? 0.15 : 0.2,
+                max_tokens:
+                  isExamRequest || isPracticeRequest
+                    ? dynamicPracticeMaxTokens
+                    : isPro
+                      ? 2600
+                      : 1600,
+              });
+              pass1Raw = await readStreamToString(
+                retryCompletion.response,
+                (acc) => {
+                  if (!openedFence && /^\s*(?:```|\{)/i.test(acc)) {
+                    ensureOpenedFence();
+                  }
+                }
+              );
+            }
+
+            if (!pass1Raw.trim()) {
+              throw new Error("Empty response received from AI stream.");
+            }
 
             let finalPayload = pass1Raw;
 
@@ -849,6 +885,7 @@ ${singlePageConstraint}
 
     const rawStream = OpenAIStream(response as any, {
       async onCompletion(completion) {
+        if (!completion.trim()) return;
         const finalText =
           autoSourcesFooter && !completion.includes("Sources:")
             ? `${completion}${autoSourcesFooter}`

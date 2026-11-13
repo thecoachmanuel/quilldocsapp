@@ -73,10 +73,12 @@ export const GEMINI_FREE_MODELS = Array.from(new Set(rawGeminiFreeModels));
 
 const BACKUP_FREE_OPENROUTER_MODELS = [
   OPENROUTER_FREE_ROUTER,
-  "google/gemma-3-27b-it:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "mistralai/mistral-small-3.1-24b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free",
+  "baidu/ernie-5.5-flash-preview:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "nvidia/nemotron-3.5-super-vl:free",
+  "cohere/north-mini-code:free",
 ];
 
 let cachedFreeModels: { models: string[]; expiresAt: number } | null = null;
@@ -84,7 +86,8 @@ const FREE_MODELS_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export function getAiClient(
   provider?: "openrouter" | "gemini" | "openai",
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  timeoutMs = 22000
 ) {
   const orKeys = getOpenRouterKeys();
   const gmKeys = getGeminiKeys();
@@ -99,7 +102,7 @@ export function getAiClient(
       apiKey: apiKeyOverride || orKeys[0] || "dummy-key",
       baseURL: OPENROUTER_BASE_URL,
       maxRetries: 0,
-      timeout: 22000,
+      timeout: timeoutMs,
       defaultHeaders: {
         "HTTP-Referer":
           process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
@@ -113,14 +116,14 @@ export function getAiClient(
       apiKey: apiKeyOverride || gmKeys[0] || "dummy-key",
       baseURL: GEMINI_OPENAI_BASE_URL,
       maxRetries: 0,
-      timeout: 22000,
+      timeout: timeoutMs,
     });
   }
 
   return new OpenAI({
     apiKey: apiKeyOverride || oaKeys[0] || "dummy-key",
     maxRetries: 0,
-    timeout: 22000,
+    timeout: timeoutMs,
   });
 }
 
@@ -639,7 +642,7 @@ async function getFreeOpenRouterCandidates(): Promise<string[]> {
 
       const merged = Array.from(
         new Set([OPENROUTER_FREE_ROUTER, ...freeScored, ...BACKUP_FREE_OPENROUTER_MODELS])
-      ).slice(0, 3);
+      ).slice(0, 8);
 
       cachedFreeModels = {
         models: merged,
@@ -681,10 +684,12 @@ type KeyCooldownBucket = {
 };
 
 const RATE_LIMIT_COOLDOWN_MS = 45 * 1000;
+const MODEL_RATE_LIMIT_COOLDOWN_MS = 35 * 1000;
 const PAID_BLOCKED_COOLDOWN_MS = 5 * 60 * 1000;
 const INVALID_KEY_COOLDOWN_MS = 10 * 60 * 1000;
 
 const keyCooldowns = new Map<string, KeyCooldownBucket>();
+const modelRateLimitedUntil = new Map<string, number>();
 const providerCursors: Record<AiProvider, number> = {
   openrouter: 0,
   gemini: 0,
@@ -693,6 +698,7 @@ const providerCursors: Record<AiProvider, number> = {
 
 export function resetAiKeyStateForTests() {
   keyCooldowns.clear();
+  modelRateLimitedUntil.clear();
   cachedFreeModels = null;
   providerCursors.openrouter = 0;
   providerCursors.gemini = 0;
@@ -718,10 +724,22 @@ function markKeyCooldown(
   keyCooldowns.set(key, existing);
 }
 
+function isKeyRateLimitedForModel(key: string, model: string | undefined, now: number): boolean {
+  const b = keyCooldowns.get(key);
+  if (b?.rateLimitedUntil && b.rateLimitedUntil > now) {
+    return true;
+  }
+  if (model) {
+    const until = modelRateLimitedUntil.get(`${key}::${model}`);
+    if (until && until > now) return true;
+  }
+  return false;
+}
+
 function getOrderedKeys(
   provider: AiProvider,
   keys: string[],
-  options?: { excludePaidBlocked?: boolean; excludeRateLimited?: boolean }
+  options?: { excludePaidBlocked?: boolean; excludeRateLimited?: boolean; model?: string }
 ): string[] {
   if (keys.length === 0) return [];
 
@@ -741,7 +759,7 @@ function getOrderedKeys(
     if (options?.excludePaidBlocked && b?.paidBlockedUntil && b.paidBlockedUntil > now) {
       continue;
     }
-    if (b?.rateLimitedUntil && b.rateLimitedUntil > now) {
+    if (isKeyRateLimitedForModel(key, options?.model, now)) {
       if (!options?.excludeRateLimited) {
         rateCooled.push(key);
       }
@@ -768,13 +786,31 @@ function getOrderedKeys(
   return rotated;
 }
 
-function recordKeyFailure(key: string, status: number | null, msg: string) {
+function recordKeyFailure(
+  key: string,
+  status: number | null,
+  msg: string,
+  model?: string
+) {
   if (isAuthError(status, msg)) {
     markKeyCooldown(key, "invalidUntil", INVALID_KEY_COOLDOWN_MS);
   } else if (isCreditOrUpgradeError(status, msg)) {
     markKeyCooldown(key, "paidBlockedUntil", PAID_BLOCKED_COOLDOWN_MS);
   } else if (isRateLimitError(status, msg)) {
-    markKeyCooldown(key, "rateLimitedUntil", RATE_LIMIT_COOLDOWN_MS);
+    const isAccountWideQuota =
+      /free-models-per-day|daily limit|per-day|account.*limit/i.test(msg);
+    if (!model || isAccountWideQuota) {
+      markKeyCooldown(key, "rateLimitedUntil", RATE_LIMIT_COOLDOWN_MS);
+    } else {
+      const cacheKey = `${key}::${model}`;
+      modelRateLimitedUntil.set(
+        cacheKey,
+        Math.max(
+          modelRateLimitedUntil.get(cacheKey) || 0,
+          Date.now() + MODEL_RATE_LIMIT_COOLDOWN_MS
+        )
+      );
+    }
   }
 }
 
@@ -788,6 +824,8 @@ async function runProviderModelFallback({
   maxTokens,
   compactContextChars,
   compactHistoryTurns,
+  attemptTimeoutMs = 20000,
+  deadlineAt,
 }: {
   provider: AiProvider;
   providerLabel: string;
@@ -798,6 +836,8 @@ async function runProviderModelFallback({
   maxTokens: number;
   compactContextChars: number;
   compactHistoryTurns: number;
+  attemptTimeoutMs?: number;
+  deadlineAt?: number;
 }): Promise<{ response?: any; activeModel?: string; lastError: any }> {
   let lastError: any = null;
   let currentMessages = compactMessagesForBudget(
@@ -808,16 +848,26 @@ async function runProviderModelFallback({
   let currentMaxTokens = maxTokens;
 
   for (const model of models) {
-    const orderedKeys = getOrderedKeys(provider, keys, {
-      excludeRateLimited: true,
-    });
-    if (orderedKeys.length === 0) {
-      // All keys for this provider are currently in rate-limit/invalid cooldown; advance immediately
+    if (deadlineAt && Date.now() >= deadlineAt) {
       break;
     }
 
+    const orderedKeys = getOrderedKeys(provider, keys, {
+      excludeRateLimited: true,
+      model,
+    });
+    if (orderedKeys.length === 0) {
+      // Try next model on this provider since rate limits are tracked per (key, model)
+      continue;
+    }
+
     for (const key of orderedKeys) {
-      const client = getAiClient(provider, key);
+      if (deadlineAt && Date.now() >= deadlineAt) {
+        break;
+      }
+      const remainingMs = deadlineAt ? deadlineAt - Date.now() : attemptTimeoutMs;
+      const timeoutMs = Math.max(6000, Math.min(attemptTimeoutMs, remainingMs));
+      const client = getAiClient(provider, key, timeoutMs);
       try {
         console.log(
           `[AI] Attempting ${providerLabel} model ${model} (key ${maskKey(key)})`
@@ -837,7 +887,7 @@ async function runProviderModelFallback({
           msg
         );
         lastError = err;
-        recordKeyFailure(key, status, msg);
+        recordKeyFailure(key, status, msg, model);
 
         if (isContextTooLongError(status, msg)) {
           currentMessages = compactMessagesForBudget(
@@ -858,7 +908,7 @@ async function runProviderModelFallback({
             const retryMsg = getErrorMessage(retryErr);
             const retryStatus = extractErrorStatus(retryErr, retryMsg);
             lastError = retryErr;
-            recordKeyFailure(key, retryStatus, retryMsg);
+            recordKeyFailure(key, retryStatus, retryMsg, model);
           }
         }
       }
@@ -886,6 +936,7 @@ export async function createCompletionWithFallback({
   const openRouterKeys = getOpenRouterKeys();
   const geminiKeys = getGeminiKeys();
   const openAiKeys = getOpenAiKeys();
+  const fallbackDeadlineAt = Date.now() + 42000;
 
   if (openRouterKeys.length > 0) {
     let currentMessages = messages;
@@ -896,11 +947,12 @@ export async function createCompletionWithFallback({
       const paidKeys = getOrderedKeys("openrouter", openRouterKeys, {
         excludePaidBlocked: true,
         excludeRateLimited: true,
+        model,
       });
-      if (paidKeys.length === 0) break;
+      if (paidKeys.length === 0) continue;
 
       for (const key of paidKeys) {
-        const openRouter = getAiClient("openrouter", key);
+        const openRouter = getAiClient("openrouter", key, 18000);
         try {
           console.log(
             `[AI] Attempting OpenRouter model: ${model} (key ${maskKey(key)})`
@@ -923,9 +975,10 @@ export async function createCompletionWithFallback({
 
           if (isCreditOrUpgradeError(status, msg)) {
             const affordable = extractAffordableTokens(msg);
-            if (affordable !== null && affordable >= 240) {
+            const minUsableTokens = Math.max(700, Math.floor(currentMaxTokens * 0.45));
+            if (affordable !== null && affordable >= minUsableTokens) {
               const clampedTokens = Math.max(
-                220,
+                450,
                 Math.min(currentMaxTokens - 100, Math.floor(affordable * 0.85))
               );
               const compactedMsgs = compactMessagesForBudget(
@@ -948,7 +1001,7 @@ export async function createCompletionWithFallback({
                 const retryMsg = getErrorMessage(retryErr);
                 const retryStatus = extractErrorStatus(retryErr, retryMsg);
                 lastError = retryErr;
-                recordKeyFailure(key, retryStatus, retryMsg);
+                recordKeyFailure(key, retryStatus, retryMsg, model);
               }
             } else {
               markKeyCooldown(key, "paidBlockedUntil", PAID_BLOCKED_COOLDOWN_MS);
@@ -972,10 +1025,10 @@ export async function createCompletionWithFallback({
               const retryMsg = getErrorMessage(retryErr);
               const retryStatus = extractErrorStatus(retryErr, retryMsg);
               lastError = retryErr;
-              recordKeyFailure(key, retryStatus, retryMsg);
+              recordKeyFailure(key, retryStatus, retryMsg, model);
             }
           } else {
-            recordKeyFailure(key, status, msg);
+            recordKeyFailure(key, status, msg, model);
           }
         }
       }
@@ -993,6 +1046,8 @@ export async function createCompletionWithFallback({
       maxTokens: Math.min(max_tokens, 5000),
       compactContextChars: 20000,
       compactHistoryTurns: 6,
+      attemptTimeoutMs: 14000,
+      deadlineAt: fallbackDeadlineAt,
     });
     if (freeRes.response && freeRes.activeModel) {
       return { response: freeRes.response, activeModel: freeRes.activeModel };

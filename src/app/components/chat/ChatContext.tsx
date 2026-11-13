@@ -227,6 +227,18 @@ export const ChatContextProvider = ({
             }
           );
         }
+
+        if (!accResponse.trim()) {
+          throw new Error(
+            "The AI tutor is currently experiencing high traffic. Please try again in a moment."
+          );
+        }
+      } catch (streamErr: any) {
+        toast({
+          title: "Failed to get AI response",
+          description: sanitizeChatErrorMessage(streamErr?.message),
+          variant: "destructive",
+        });
       } finally {
         inFlightRef.current = false;
         setIsLoading(false);

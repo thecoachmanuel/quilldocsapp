@@ -192,218 +192,109 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
   return (
     <div
       data-interactive-quiz="true"
-      className="my-3 w-full max-w-full rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden not-prose transition-all font-sans"
+      className="my-3 w-full max-w-full rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden not-prose font-sans"
     >
-      {/* Quiz Header */}
-      <div className="bg-gradient-to-r from-blue-50 via-white to-indigo-50/70 border-b border-zinc-200 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0 shadow-sm">
-            <HelpCircle className="h-5 w-5" />
+      {/* Simple Header */}
+      <div className="p-4 border-b border-zinc-200 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0">
+            <HelpCircle className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h4 className="text-base sm:text-lg font-bold text-zinc-900 truncate">
-              {data.title || "Interactive Practice Quiz"}
+            <h4 className="text-base font-bold text-gray-900 truncate">
+              {data.title || "Practice Quiz"}
             </h4>
-            <p className="text-xs sm:text-sm text-zinc-600 font-medium">
-              {totalQuestions} question{totalQuestions === 1 ? "" : "s"} • Tap an
-              option for each question, then submit
+            <p className="text-xs text-zinc-500">
+              {totalQuestions} question{totalQuestions === 1 ? "" : "s"}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div>
           {!isSubmitted ? (
-            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs sm:text-sm font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700">
               {answeredCount}/{totalQuestions} answered
             </span>
           ) : hasAnswerKey ? (
             <span
               className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs sm:text-sm font-bold border shadow-sm",
-                percentage >= 80
-                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border",
+                percentage >= 70
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                   : percentage >= 50
-                    ? "bg-blue-100 text-blue-800 border-blue-300"
-                    : "bg-amber-100 text-amber-800 border-amber-300"
+                    ? "bg-blue-50 text-blue-700 border-blue-200"
+                    : "bg-amber-50 text-amber-800 border-amber-200"
               )}
             >
-              <Award className="h-4 w-4" />
+              <Award className="h-3.5 w-3.5" />
               <span>
-                Score: {score}/{totalQuestions} ({percentage}%)
+                {score}/{totalQuestions} ({percentage}%)
               </span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs sm:text-sm font-bold border bg-blue-100 text-blue-800 border-blue-300">
-              <CheckCircle2 className="h-4 w-4" />
-              <span>Sent for AI Grading</span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>Submitted</span>
             </span>
           )}
         </div>
       </div>
 
-      {/* Score Banner (After Submit) */}
-      {isSubmitted && hasAnswerKey && (
-        <div
-          className={cn(
-            "p-4 sm:p-5 border-b transition-all flex flex-col sm:flex-row items-center justify-between gap-3",
-            percentage >= 80
-              ? "bg-emerald-50 border-emerald-200"
-              : percentage >= 50
-                ? "bg-blue-50 border-blue-200"
-                : "bg-amber-50 border-amber-200"
-          )}
-        >
-          <div className="flex items-center gap-3.5 text-center sm:text-left">
-            <div
-              className={cn(
-                "h-12 w-12 rounded-full flex items-center justify-center font-extrabold text-base shadow-sm shrink-0",
-                percentage >= 80
-                  ? "bg-emerald-600 text-white"
-                  : percentage >= 50
-                    ? "bg-blue-600 text-white"
-                    : "bg-amber-600 text-white"
-              )}
-            >
-              {percentage}%
-            </div>
-            <div>
-              <h5 className="text-sm sm:text-base font-bold text-zinc-900">
-                {percentage === 100
-                  ? "Outstanding! Perfect Score"
-                  : percentage >= 80
-                    ? "Great job! Strong comprehension"
-                    : percentage >= 50
-                      ? "Good effort! Review the solutions below"
-                      : "Keep practicing! Study the solutions below and retake"}
-              </h5>
-              <p className="text-xs sm:text-sm text-zinc-600 font-medium">
-                You scored {score} out of {totalQuestions} ({percentage}%).
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-2 shrink-0">
-            <button
-              type="button"
-              disabled={isLoading || aiReviewRequested}
-              onClick={handleRequestAiReview}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold shadow-sm transition active:scale-95",
-                aiReviewRequested
-                  ? "bg-emerald-600 text-white cursor-default"
-                  : "bg-blue-600 hover:bg-blue-700 text-white"
-              )}
-            >
-              <Send className="h-3.5 w-3.5" />
-              <span>
-                {aiReviewRequested
-                  ? "Sent to AI Tutor"
-                  : "Get AI Review & Solutions"}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={handleRetake}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-zinc-50 text-zinc-800 border border-zinc-300 shadow-sm transition active:scale-95"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>Retake</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowAllExplanations((prev) => !prev)}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100 transition"
-            >
-              {showAllExplanations ? (
-                <>
-                  <ChevronUp className="h-4 w-4" />
-                  <span>Hide Solutions</span>
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-4 w-4" />
-                  <span>Show Solutions</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Questions List */}
-      <div className="p-4 sm:p-5 space-y-5">
+      {/* Questions */}
+      <div className="divide-y divide-zinc-200">
         {data.questions.map((q, qIdx) => {
           const userSelectedIdx = selectedAnswers[qIdx];
           const isAnswered = typeof userSelectedIdx === "number";
           const hasCorrect = hasAnswerKey && q.correctIndex >= 0;
           const isCorrect =
             isSubmitted && hasCorrect && userSelectedIdx === q.correctIndex;
-          const isUnanswered = isSubmitted && !isAnswered;
 
           return (
             <div
               key={`${q.id ?? qIdx}-${qIdx}`}
-              className={cn(
-                "rounded-xl border p-4 sm:p-5 transition-all duration-200",
-                !isSubmitted || !hasCorrect
-                  ? "border-zinc-200 bg-white"
-                  : isCorrect
-                    ? "border-emerald-300 bg-emerald-50/30"
-                    : "border-rose-200 bg-rose-50/30"
-              )}
+              className="p-4 sm:p-5 space-y-3 bg-white"
             >
-              {/* Question Header */}
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
-                    Question {qIdx + 1}
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <span className="text-sm sm:text-base font-bold text-gray-900 shrink-0">
+                    {qIdx + 1}.
                   </span>
-                  {!isSubmitted && isAnswered && (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200">
-                      Option {optionLetters[userSelectedIdx] || userSelectedIdx + 1} picked
-                    </span>
-                  )}
-                  {isSubmitted && hasCorrect && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-md",
-                        isCorrect
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-rose-100 text-rose-800"
-                      )}
-                    >
-                      {isCorrect ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Correct (+1)
-                        </>
-                      ) : isUnanswered ? (
-                        <>
-                          <XCircle className="h-3.5 w-3.5" /> Skipped (0)
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="h-3.5 w-3.5" /> Incorrect (0)
-                        </>
-                      )}
-                    </span>
-                  )}
+                  <div className="text-sm sm:text-base font-medium text-gray-900 leading-relaxed min-w-0 flex-1">
+                    <MathMarkdown
+                      content={q.question}
+                      size="normal"
+                      className="font-medium text-gray-900 [&_p]:my-0"
+                    />
+                  </div>
                 </div>
+                {isSubmitted && hasCorrect && (
+                  <span
+                    className={cn(
+                      "shrink-0 inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full",
+                      isCorrect
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-rose-50 text-rose-700"
+                    )}
+                  >
+                    {isCorrect ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Correct
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="h-3.5 w-3.5" />{" "}
+                        {!isAnswered ? "Skipped" : "Wrong"}
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
 
-              {/* Question Text with KaTeX math */}
-              <div className="text-sm sm:text-base font-semibold text-zinc-900 mb-3.5 leading-relaxed">
-                <MathMarkdown
-                  content={q.question}
-                  size="normal"
-                  className="font-semibold text-zinc-900"
-                />
-              </div>
-
-              {/* Options Stack */}
+              {/* Options */}
               <div
                 role="radiogroup"
                 aria-label={`Options for Question ${qIdx + 1}`}
-                className="space-y-2.5"
+                className="space-y-2 pl-0 sm:pl-5"
               >
                 {q.options.map((optionText, optIdx) => {
                   const isSelected = userSelectedIdx === optIdx;
@@ -429,29 +320,29 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                         handleSelectOption(qIdx, optIdx);
                       }}
                       className={cn(
-                        "w-full text-left flex items-start gap-3 p-3 sm:p-3.5 rounded-xl border-2 transition-all duration-150 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1",
+                        "w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-lg border transition-all text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
                         !isSubmitted
                           ? isSelected
-                            ? "border-blue-600 bg-blue-100 text-blue-950 shadow-sm cursor-pointer font-medium"
-                            : "border-zinc-200 bg-white hover:bg-blue-50/40 hover:border-blue-400 text-zinc-800 cursor-pointer active:scale-[0.99]"
+                            ? "border-blue-600 bg-blue-50 text-blue-950 font-medium ring-1 ring-blue-600"
+                            : "border-zinc-200 bg-white hover:bg-zinc-50 hover:border-zinc-300 text-gray-800 cursor-pointer"
                           : !hasCorrect
                             ? isSelected
-                              ? "border-blue-600 bg-blue-100 text-blue-950 font-medium"
-                              : "border-zinc-200 bg-zinc-50/50 text-zinc-600"
+                              ? "border-blue-600 bg-blue-50 text-blue-950 font-medium"
+                              : "border-zinc-200 bg-zinc-50/50 text-zinc-500"
                             : isThisOptionCorrect
-                              ? "border-emerald-500 bg-emerald-50 text-emerald-950 font-medium"
+                              ? "border-emerald-500 bg-emerald-50/70 text-emerald-950 font-medium"
                               : isThisOptionUserWrong
-                                ? "border-rose-500 bg-rose-50 text-rose-950"
-                                : "border-zinc-200 bg-zinc-50/60 text-zinc-500 opacity-80"
+                                ? "border-rose-400 bg-rose-50/70 text-rose-950"
+                                : "border-zinc-200 bg-white text-zinc-500 opacity-75"
                       )}
                     >
                       <span
                         className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md text-xs sm:text-sm font-bold shrink-0 transition-colors mt-0.5 border",
+                          "flex h-6 w-6 items-center justify-center rounded text-xs font-bold shrink-0 border",
                           !isSubmitted || !hasCorrect
                             ? isSelected
-                              ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                              : "bg-zinc-100 text-zinc-700 border-zinc-300"
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-zinc-100 text-zinc-700 border-zinc-200"
                             : isThisOptionCorrect
                               ? "bg-emerald-600 text-white border-emerald-600"
                               : isThisOptionUserWrong
@@ -462,7 +353,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                         {optionLetters[optIdx] || optIdx + 1}
                       </span>
 
-                      <div className="flex-1 text-sm sm:text-base leading-relaxed min-w-0 [&_a]:pointer-events-none">
+                      <div className="flex-1 min-w-0 leading-relaxed [&_a]:pointer-events-none">
                         <MathMarkdown
                           content={optionText}
                           size="normal"
@@ -471,41 +362,25 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                       </div>
 
                       {!isSubmitted && isSelected && (
-                        <span className="shrink-0 inline-flex items-center gap-1 self-center rounded-full bg-blue-600 px-2.5 py-0.5 text-xs font-bold text-white shadow-sm">
-                          <Check className="h-3.5 w-3.5" />
-                          <span>Selected</span>
-                        </span>
-                      )}
-
-                      {isSubmitted && hasCorrect && (
-                        <div className="shrink-0 flex items-center gap-1 self-center">
-                          {isThisOptionCorrect && (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                              <Check className="h-3.5 w-3.5" /> Correct
-                            </span>
-                          )}
-                          {isThisOptionUserWrong && (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-100 px-2.5 py-0.5 rounded-full">
-                              <XCircle className="h-3.5 w-3.5" /> Your choice
-                            </span>
-                          )}
-                        </div>
+                        <Check className="h-4 w-4 text-blue-600 shrink-0" />
                       )}
                     </button>
                   );
                 })}
               </div>
 
-              {/* Solution & Explanation (Revealed after submit) */}
+              {/* Explanation */}
               {isSubmitted && showAllExplanations && q.explanation && (
-                <div className="mt-3.5 pt-3 border-t border-zinc-200 bg-blue-50/70 rounded-lg p-3.5 text-sm sm:text-base text-zinc-800">
-                  <div className="flex items-center gap-1.5 font-bold text-blue-900 mb-1.5 text-sm sm:text-base">
-                    <Lightbulb className="h-4 w-4 text-blue-600 shrink-0" />
-                    <span>Solution &amp; Explanation:</span>
+                <div className="sm:ml-5 rounded-lg bg-zinc-50 border border-zinc-200 px-3.5 py-2.5 text-sm text-zinc-800">
+                  <div className="flex items-center gap-1.5 font-semibold text-gray-900 mb-1 text-xs">
+                    <Lightbulb className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                    <span>Solution</span>
                   </div>
-                  <div className="text-zinc-800 leading-relaxed">
-                    <MathMarkdown content={q.explanation} size="normal" />
-                  </div>
+                  <MathMarkdown
+                    content={q.explanation}
+                    size="normal"
+                    className="[&_p]:my-0"
+                  />
                 </div>
               )}
             </div>
@@ -513,67 +388,73 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
         })}
       </div>
 
-      {/* Quiz Footer Actions */}
-      <div className="p-4 sm:p-5 bg-zinc-50 border-t border-zinc-200 flex flex-wrap items-center justify-between gap-3">
+      {/* Simple Footer */}
+      <div className="px-4 py-3 bg-zinc-50 border-t border-zinc-200 flex flex-wrap items-center justify-between gap-2.5">
         {!isSubmitted ? (
           <>
-            <span className="text-xs sm:text-sm text-zinc-600 font-medium">
-              {answeredCount === totalQuestions
-                ? "All questions answered! Click submit to see your score & solutions."
-                : `${totalQuestions - answeredCount} question${
-                    totalQuestions - answeredCount === 1 ? "" : "s"
-                  } remaining.`}
+            <span className="text-xs text-zinc-500">
+              {answeredCount}/{totalQuestions} answered
             </span>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={answeredCount === 0}
               className={cn(
-                "inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition active:scale-95 shadow-sm",
+                "inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition active:scale-95",
                 answeredCount > 0
-                  ? "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm cursor-pointer"
                   : "bg-zinc-200 text-zinc-400 cursor-not-allowed"
               )}
             >
               <CheckCircle2 className="h-4 w-4" />
-              <span>
-                {hasAnswerKey
-                  ? "Submit & Score Quiz"
-                  : "Submit & Get AI Solutions"}
-              </span>
+              <span>{hasAnswerKey ? "Submit & Score" : "Submit"}</span>
             </button>
           </>
         ) : (
           <div className="w-full flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs sm:text-sm text-zinc-600 font-medium">
-              {hasAnswerKey
-                ? "Want deeper coaching? Send your score to the AI tutor or retake."
-                : "Your answers have been sent to the AI tutor for grading & solutions."}
-            </span>
-            <div className="flex items-center gap-2">
+            {hasAnswerKey && (
+              <button
+                type="button"
+                onClick={() => setShowAllExplanations((prev) => !prev)}
+                className="inline-flex items-center gap-1 text-xs font-medium text-zinc-600 hover:text-gray-900"
+              >
+                {showAllExplanations ? (
+                  <>
+                    <ChevronUp className="h-3.5 w-3.5" />
+                    <span>Hide Solutions</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    <span>Show Solutions</span>
+                  </>
+                )}
+              </button>
+            )}
+            <div className="flex items-center gap-2 ml-auto">
               <button
                 type="button"
                 disabled={isLoading || aiReviewRequested}
                 onClick={handleRequestAiReview}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition active:scale-95 shadow-sm",
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition",
                   aiReviewRequested
-                    ? "bg-emerald-600 text-white cursor-default"
-                    : "bg-white hover:bg-blue-50 text-blue-700 border border-blue-300"
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    : "bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-300"
                 )}
               >
                 <Send className="h-3.5 w-3.5" />
                 <span>
-                  {aiReviewRequested ? "Sent to AI Tutor" : "Ask AI to Explain"}
+                  {aiReviewRequested ? "Sent to AI" : "Ask AI Tutor"}
                 </span>
               </button>
               <button
                 type="button"
                 onClick={handleRetake}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white transition active:scale-95 shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white transition"
               >
-                <RotateCcw className="h-4 w-4" />
-                <span>Practice Again</span>
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Retake</span>
               </button>
             </div>
           </div>

@@ -19,7 +19,7 @@ function collectEnvKeys(baseNames: string[]): string[] {
   for (const name of baseNames) {
     collected.push(...parseKeyList(process.env[name]));
     collected.push(...parseKeyList(process.env[`${name}S`]));
-    for (let i = 1; i <= 15; i++) {
+    for (let i = 1; i <= 30; i++) {
       collected.push(...parseKeyList(process.env[`${name}_${i}`]));
     }
   }
@@ -27,12 +27,13 @@ function collectEnvKeys(baseNames: string[]): string[] {
 }
 
 export function getOpenRouterKeys(): string[] {
-  return collectEnvKeys(["OPENROUTER_API_KEY"]);
+  return collectEnvKeys(["OPENROUTER_API_KEY", "OPENROUTER_KEY"]);
 }
 
 export function getGeminiKeys(): string[] {
   return collectEnvKeys([
     "GEMINI_API_KEY",
+    "GEMINI_KEY",
     "GOOGLE_API_KEY",
     "GOOGLE_GENERATIVE_AI_API_KEY",
   ]);
@@ -638,7 +639,7 @@ async function getFreeOpenRouterCandidates(): Promise<string[]> {
 
       const merged = Array.from(
         new Set([OPENROUTER_FREE_ROUTER, ...freeScored, ...BACKUP_FREE_OPENROUTER_MODELS])
-      ).slice(0, 7);
+      ).slice(0, 3);
 
       cachedFreeModels = {
         models: merged,
@@ -720,7 +721,7 @@ function markKeyCooldown(
 function getOrderedKeys(
   provider: AiProvider,
   keys: string[],
-  options?: { excludePaidBlocked?: boolean }
+  options?: { excludePaidBlocked?: boolean; excludeRateLimited?: boolean }
 ): string[] {
   if (keys.length === 0) return [];
 
@@ -741,7 +742,9 @@ function getOrderedKeys(
       continue;
     }
     if (b?.rateLimitedUntil && b.rateLimitedUntil > now) {
-      rateCooled.push(key);
+      if (!options?.excludeRateLimited) {
+        rateCooled.push(key);
+      }
     } else {
       ready.push(key);
     }
@@ -749,6 +752,10 @@ function getOrderedKeys(
 
   if (ready.length > 0 || rateCooled.length > 0) {
     return [...ready, ...rateCooled];
+  }
+
+  if (options?.excludeRateLimited) {
+    return [];
   }
 
   // If every key was excluded only for auth errors, avoid returning blocked paid keys
@@ -801,8 +808,13 @@ async function runProviderModelFallback({
   let currentMaxTokens = maxTokens;
 
   for (const model of models) {
-    const orderedKeys = getOrderedKeys(provider, keys);
-    let modelHadRateLimitOnly = true;
+    const orderedKeys = getOrderedKeys(provider, keys, {
+      excludeRateLimited: true,
+    });
+    if (orderedKeys.length === 0) {
+      // All keys for this provider are currently in rate-limit/invalid cooldown; advance immediately
+      break;
+    }
 
     for (const key of orderedKeys) {
       const client = getAiClient(provider, key);
@@ -828,13 +840,12 @@ async function runProviderModelFallback({
         recordKeyFailure(key, status, msg);
 
         if (isContextTooLongError(status, msg)) {
-          modelHadRateLimitOnly = false;
           currentMessages = compactMessagesForBudget(
             messages,
             Math.min(9000, Math.floor(compactContextChars / 2)),
             2
           );
-          currentMaxTokens = Math.min(currentMaxTokens, 900);
+          currentMaxTokens = Math.min(currentMaxTokens, 1200);
           try {
             const retryRes = await attemptCompletionStream(client, {
               model,
@@ -849,14 +860,8 @@ async function runProviderModelFallback({
             lastError = retryErr;
             recordKeyFailure(key, retryStatus, retryMsg);
           }
-        } else if (!isRateLimitError(status, msg)) {
-          modelHadRateLimitOnly = false;
         }
       }
-    }
-
-    if (modelHadRateLimitOnly && models.length > 1) {
-      await sleep(250);
     }
   }
 
@@ -890,6 +895,7 @@ export async function createCompletionWithFallback({
     for (const model of FALLBACK_MODELS) {
       const paidKeys = getOrderedKeys("openrouter", openRouterKeys, {
         excludePaidBlocked: true,
+        excludeRateLimited: true,
       });
       if (paidKeys.length === 0) break;
 

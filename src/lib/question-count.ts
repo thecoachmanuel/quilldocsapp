@@ -59,6 +59,12 @@ const NUMBER_WORDS: Record<string, number> = {
 const NUM_TOKEN_PATTERN =
   "(?:\\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[-\\s](?:one|two|three|four|five|six|seven|eight|nine))?|thirty(?:[-\\s]five)?|forty(?:[-\\s]five)?|fifty)";
 
+export const MAX_EXAM_MCQ = 12;
+export const MAX_EXAM_THEORY = 4;
+export const MAX_EXAM_TOTAL = 12;
+export const MAX_QUIZ_QUESTIONS = 10;
+export const MAX_FLASHCARDS = 10;
+
 function parseNumberToken(raw: string | undefined): number | null {
   if (!raw) return null;
   const normalized = raw.trim().toLowerCase().replace(/\s+/g, "-");
@@ -134,7 +140,7 @@ export function extractRequestedQuestionCounts(
     theoryCount = 0;
   }
 
-  // Number before MCQ/Theory noun (e.g., "15 multiple-choice questions", "EXACTLY 10 mcqs")
+  // Number before MCQ/Theory noun (e.g., "10 multiple-choice questions", "EXACTLY 8 mcqs")
   if (mcqCount === null) {
     const m =
       text.match(
@@ -142,7 +148,7 @@ export function extractRequestedQuestionCounts(
       ) ||
       text.match(new RegExp(`\\b${mcqNoun}\\s*[:\\-=]\\s*(${NUM_TOKEN_PATTERN})\\b`, "i"));
     const parsed = parseNumberToken(m?.[1]);
-    if (parsed !== null) mcqCount = clampCount(parsed, 50);
+    if (parsed !== null) mcqCount = clampCount(parsed, MAX_EXAM_MCQ);
   }
 
   if (theoryCount === null) {
@@ -152,7 +158,7 @@ export function extractRequestedQuestionCounts(
       ) ||
       text.match(new RegExp(`\\b${theoryNoun}\\s*[:\\-=]\\s*(${NUM_TOKEN_PATTERN})\\b`, "i"));
     const parsed = parseNumberToken(m?.[1]);
-    if (parsed !== null) theoryCount = clampCount(parsed, 25);
+    if (parsed !== null) theoryCount = clampCount(parsed, MAX_EXAM_THEORY);
   }
 
   // Only one section explicitly asked ("only theory", "only mcq")
@@ -195,7 +201,7 @@ export function extractRequestedQuestionCounts(
       );
     const parsed = parseNumberToken(m?.[1]);
     if (parsed !== null && parsed > 0) {
-      totalCount = clampCount(parsed, 50);
+      totalCount = clampCount(parsed, MAX_FLASHCARDS);
     }
     return {
       kind: "flashcards",
@@ -220,7 +226,7 @@ export function extractRequestedQuestionCounts(
         );
       const parsed = parseNumberToken(m?.[1]);
       if (parsed !== null && parsed > 0) {
-        totalCount = clampCount(parsed, 50);
+        totalCount = clampCount(parsed, MAX_EXAM_TOTAL);
       }
     }
     return {
@@ -249,9 +255,9 @@ export function extractRequestedQuestionCounts(
     );
   const qParsed = parseNumberToken(qMatch?.[1]);
   if (qParsed !== null && qParsed > 0) {
-    totalCount = clampCount(qParsed, 50);
+    totalCount = clampCount(qParsed, MAX_QUIZ_QUESTIONS);
   } else if (mcqCount !== null && mcqCount > 0) {
-    totalCount = mcqCount;
+    totalCount = clampCount(mcqCount, MAX_QUIZ_QUESTIONS);
   }
 
   return {

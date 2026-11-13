@@ -350,90 +350,47 @@ export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
       data-interactive-flashcards="true"
       tabIndex={0}
       onKeyDown={handleContainerKeyDown}
-      className="my-3 w-full max-w-full rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden not-prose transition-all font-sans focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+      className="my-3 w-full max-w-full rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden not-prose font-sans focus:outline-none focus:ring-2 focus:ring-blue-500/40"
     >
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-50 via-white to-indigo-50/70 border-b border-zinc-200 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0 shadow-sm">
-            <Layers className="h-5 w-5" />
+      {/* Simple Header */}
+      <div className="p-4 border-b border-zinc-200 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0">
+            <Layers className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h4 className="text-base sm:text-lg font-bold text-zinc-900 truncate">
+            <h4 className="text-base font-bold text-gray-900 truncate">
               {data.title || "Study Flashcards"}
             </h4>
-            <p className="text-xs sm:text-sm text-zinc-600 font-medium">
+            <p className="text-xs text-zinc-500">
               {isCompleted
                 ? `Completed ${overallTotal} card${overallTotal === 1 ? "" : "s"}`
-                : `Card ${safeIndex + 1} of ${totalCards} • Answer & check solution, or click card to flip`}
+                : `Card ${safeIndex + 1} of ${totalCards}`}
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-semibold">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-            <Award className="h-3.5 w-3.5" />
-            <span>
-              Score: {formattedTotalScore}/{overallTotal}
-            </span>
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700">
+          <Award className="h-3.5 w-3.5 text-blue-600" />
+          <span>
+            {formattedTotalScore}/{overallTotal}
           </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            <span>{masteredIds.size} Correct</span>
-          </span>
-          {reviewIds.size > 0 && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-              <XCircle className="h-3.5 w-3.5" />
-              <span>{reviewIds.size} Review</span>
-            </span>
-          )}
-        </div>
+        </span>
       </div>
 
-      {/* Progress Bar */}
-      <div className="w-full bg-zinc-100 h-1.5 overflow-hidden">
+      {/* Slim Progress Bar */}
+      <div className="w-full bg-zinc-100 h-1 overflow-hidden">
         <div
           className="bg-blue-600 h-full transition-all duration-300"
           style={{ width: `${isCompleted ? 100 : progressPercent}%` }}
         />
       </div>
 
-      {/* Quick Card Navigator */}
-      {!isCompleted && totalCards > 1 && (
-        <div className="px-4 sm:px-5 pt-3 flex flex-wrap items-center gap-1.5">
-          {activeCards.map((c, idx) => {
-            const isCurrent = idx === safeIndex;
-            const isCardMastered = masteredIds.has(c.id);
-            const isCardReview = reviewIds.has(c.id);
-            return (
-              <button
-                key={`${c.id}-${idx}`}
-                type="button"
-                onClick={() => goToCard(idx)}
-                title={`Go to Card ${idx + 1}`}
-                className={cn(
-                  "h-7 min-w-[28px] px-2 rounded-md text-xs font-bold border transition",
-                  isCurrent
-                    ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                    : isCardMastered
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
-                      : isCardReview
-                        ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100"
-                        : "bg-zinc-50 text-zinc-600 border-zinc-200 hover:bg-zinc-100"
-                )}
-              >
-                {idx + 1}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Flashcard Body */}
+      {/* Body */}
       <div className="p-4 sm:p-5">
         {!isCompleted && currentCard ? (
           <div>
-            {/* Card Display */}
+            {/* Simple Card */}
             <div
               role="button"
               tabIndex={0}
@@ -446,82 +403,57 @@ export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
                 }
               }}
               className={cn(
-                "relative min-h-[210px] sm:min-h-[230px] w-full rounded-2xl border p-5 sm:p-6 transition-all duration-200 flex flex-col justify-between cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm hover:shadow-md",
+                "min-h-[190px] w-full rounded-xl border p-5 sm:p-6 transition cursor-pointer flex flex-col justify-between focus:outline-none focus:ring-2 focus:ring-blue-500",
                 !isFlipped
-                  ? "bg-gradient-to-b from-white to-zinc-50 border-zinc-200"
-                  : "bg-gradient-to-b from-emerald-50/50 via-white to-blue-50/40 border-emerald-300"
+                  ? "bg-white border-zinc-200 hover:border-zinc-300"
+                  : "bg-zinc-50/60 border-blue-200"
               )}
             >
-              {/* Top Row */}
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold tracking-wide uppercase",
-                      !isFlipped
-                        ? "bg-blue-100 text-blue-800 border border-blue-200"
-                        : "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                    )}
-                  >
-                    <BookOpen className="h-3.5 w-3.5" />
-                    {!isFlipped ? "Question / Prompt" : "Official Solution"}
-                  </span>
-
-                  {masteredIds.has(currentCard.id) && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Correct (+1)
-                    </span>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold",
+                    !isFlipped
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-emerald-50 text-emerald-700"
                   )}
-                  {!masteredIds.has(currentCard.id) &&
-                    currentEval?.status === "partial" && (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
-                        Partial (+0.5)
-                      </span>
-                    )}
-                  {reviewIds.has(currentCard.id) &&
-                    currentEval?.status !== "partial" && (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
-                        Needs Review
-                      </span>
-                    )}
-                </div>
-
-                <span className="text-xs sm:text-sm font-semibold text-zinc-500">
-                  {safeIndex + 1} / {totalCards}
+                >
+                  <BookOpen className="h-3 w-3" />
+                  {!isFlipped ? "Question" : "Answer"}
                 </span>
+
+                <span className="text-xs text-zinc-400">Tap to flip</span>
               </div>
 
-              {/* Front or Back Content */}
               <div className="flex-1 flex flex-col justify-center my-2">
                 {!isFlipped ? (
-                  <div className="text-base sm:text-lg font-semibold text-zinc-900 leading-relaxed text-left sm:text-center">
+                  <div className="text-base sm:text-lg font-semibold text-gray-900 leading-relaxed text-left sm:text-center">
                     <MathMarkdown
                       content={currentCard.front}
                       size="large"
-                      className="font-semibold text-zinc-900"
+                      className="font-semibold text-gray-900"
                     />
                   </div>
                 ) : (
-                  <div className="space-y-3 text-left">
-                    <div className="text-sm sm:text-base text-zinc-900 leading-relaxed font-medium">
+                  <div className="space-y-2.5 text-left">
+                    <div className="text-sm sm:text-base text-gray-900 leading-relaxed font-medium">
                       <MathMarkdown
                         content={currentCard.back}
                         size="normal"
-                        className="text-zinc-900"
+                        className="text-gray-900"
                       />
                     </div>
                     {currentDraft.trim() && (
-                      <div className="w-full text-left rounded-lg bg-zinc-100/90 border border-zinc-200 px-3.5 py-2.5 text-sm text-zinc-800">
-                        <span className="font-bold text-zinc-900">
+                      <div className="rounded-lg bg-white border border-zinc-200 px-3 py-2 text-xs sm:text-sm text-zinc-700">
+                        <span className="font-semibold text-gray-900">
                           Your answer:{" "}
                         </span>
-                        <span>{currentDraft}</span>
+                        {currentDraft}
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Hint on Front */}
                 {!isFlipped && currentCard.hint && (
                   <div className="mt-3 text-center">
                     {!showHint ? (
@@ -531,92 +463,67 @@ export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
                           e.stopPropagation();
                           setShowHint(true);
                         }}
-                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-800 underline transition"
+                        className="text-xs font-medium text-blue-600 hover:underline"
                       >
-                        <HelpCircle className="h-4 w-4" />
-                        <span>Show Hint</span>
+                        Show Hint
                       </button>
                     ) : (
-                      <div
+                      <p
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-block max-w-lg mx-auto text-sm bg-amber-50 text-amber-900 border border-amber-200 rounded-lg px-3.5 py-2 mt-1 text-left"
+                        className="inline-block text-xs bg-zinc-100 text-zinc-700 rounded-md px-3 py-1.5 mt-1"
                       >
-                        <span className="font-bold">Hint: </span>
-                        <span>{currentCard.hint}</span>
-                      </div>
+                        <span className="font-semibold">Hint: </span>
+                        {currentCard.hint}
+                      </p>
                     )}
                   </div>
                 )}
               </div>
-
-              {/* Flip prompt */}
-              <div className="flex items-center justify-center gap-1.5 text-xs sm:text-sm text-zinc-500 font-medium pt-3 border-t border-zinc-100">
-                <RotateCw className="h-3.5 w-3.5 text-blue-600" />
-                <span>
-                  Click card to{" "}
-                  {isFlipped ? "see question again" : "flip & reveal solution"}
-                </span>
-              </div>
             </div>
 
-            {/* Type Your Answer Box & Check Solution Controls */}
+            {/* Answer Box / Rating Controls */}
             {!isFlipped ? (
               <form
                 onSubmit={handleCheckOrReveal}
-                className="mt-3.5 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-end"
+                className="mt-3 flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
               >
-                <div className="flex-1 min-w-0">
-                  <label
-                    htmlFor={`fc-answer-${currentCard.id}`}
-                    className="block text-xs sm:text-sm font-semibold text-zinc-700 mb-1.5"
-                  >
-                    Your Answer (type to auto-check, or flip to study solution)
-                  </label>
-                  <textarea
-                    id={`fc-answer-${currentCard.id}`}
-                    rows={2}
-                    value={currentDraft}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setTypedAnswers((prev) => ({
-                        ...prev,
-                        [currentCard.id]: val,
-                      }));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleCheckOrReveal();
-                      }
-                    }}
-                    placeholder="Type your answer and press Enter to check..."
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm sm:text-base text-zinc-900 placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
-                  />
-                </div>
+                <input
+                  id={`fc-answer-${currentCard.id}`}
+                  type="text"
+                  value={currentDraft}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setTypedAnswers((prev) => ({
+                      ...prev,
+                      [currentCard.id]: val,
+                    }));
+                  }}
+                  placeholder="Type your answer (optional)..."
+                  className="flex-1 rounded-lg border border-zinc-200 bg-white px-3.5 py-2.5 text-sm sm:text-base text-gray-900 placeholder:text-zinc-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                />
                 <button
                   type="submit"
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-3 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition active:scale-95 shrink-0"
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition active:scale-95 shrink-0"
                 >
                   {currentDraft.trim() ? (
                     <>
                       <Check className="h-4 w-4" />
-                      <span>Check Answer</span>
+                      <span>Check</span>
                     </>
                   ) : (
                     <>
                       <RotateCw className="h-4 w-4" />
-                      <span>Reveal Solution</span>
+                      <span>Show Answer</span>
                     </>
                   )}
                 </button>
               </form>
             ) : (
-              <div className="mt-3.5 space-y-3">
-                {/* Auto-evaluation banner when user typed an answer */}
+              <div className="mt-3 space-y-2.5">
                 {currentEval && currentDraft.trim() && (
                   <div
                     className={cn(
-                      "rounded-lg border px-3.5 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2",
+                      "rounded-lg border px-3 py-2 text-xs sm:text-sm flex items-center gap-2 font-medium",
                       currentEval.status === "correct"
                         ? "bg-emerald-50 border-emerald-200 text-emerald-900"
                         : currentEval.status === "partial"
@@ -624,160 +531,118 @@ export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
                           : "bg-amber-50 border-amber-200 text-amber-900"
                     )}
                   >
-                    <div className="flex items-center gap-2 font-semibold">
-                      {currentEval.status === "correct" ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                      ) : (
-                        <HelpCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                      )}
-                      <span>{currentEval.reason}</span>
-                    </div>
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span>{currentEval.reason}</span>
                   </div>
                 )}
 
-                {/* Self-confirmation / Next controls */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5">
+                <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={(e) => markCardStatus(currentCard.id, false, true, e)}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 shadow-sm transition active:scale-95"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-amber-50 text-amber-800 border border-zinc-200 transition"
                   >
                     <XCircle className="h-4 w-4 text-amber-600" />
-                    <span>Needs Review (0)</span>
+                    <span>Needs Review</span>
                   </button>
                   <button
                     type="button"
                     onClick={(e) => markCardStatus(currentCard.id, true, true, e)}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-sm transition active:scale-95"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition"
                   >
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                    <span>Got It Right (+1)</span>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Got It</span>
                   </button>
                 </div>
               </div>
             )}
           </div>
         ) : (
-          /* Deck Completed Screen + Full Solutions & AI Grading */
-          <div className="py-4 px-1 sm:px-2 space-y-4">
-            <div className="text-center flex flex-col items-center justify-center gap-2">
-              <div className="h-12 w-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-sm">
-                <Trophy className="h-6 w-6" />
+          /* Simple Completion View */
+          <div className="py-2 space-y-4">
+            <div className="text-center space-y-1">
+              <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <Trophy className="h-5 w-5" />
               </div>
-              <h4 className="text-base sm:text-lg font-bold text-zinc-900">
-                Deck Completed — Score: {formattedTotalScore}/{overallTotal} (
-                {scorePercent}%)
+              <h4 className="text-base font-bold text-gray-900">
+                Score: {formattedTotalScore}/{overallTotal} ({scorePercent}%)
               </h4>
-              <p className="text-sm text-zinc-600 max-w-md">
-                <strong className="text-emerald-700">{masteredIds.size}</strong>{" "}
-                mastered •{" "}
-                <strong className="text-amber-700">{reviewIds.size}</strong>{" "}
-                marked for review
-                {answeredTotalCount > 0
-                  ? ` • ${answeredTotalCount} typed response${
-                      answeredTotalCount === 1 ? "" : "s"
-                    }`
-                  : ""}
+              <p className="text-xs text-zinc-500">
+                {masteredIds.size} mastered · {reviewIds.size} for review
+                {answeredTotalCount > 0 ? ` · ${answeredTotalCount} answered` : ""}
               </p>
             </div>
 
-            {/* All Card Answers & Official Solutions Summary */}
-            <div className="max-h-96 overflow-y-auto space-y-3 pr-1">
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
               {data.cards.map((c, idx) => {
-                const userAns = (typedAnswers[c.id] || "").trim();
                 const isRight = masteredIds.has(c.id);
-                const ev = evaluations[c.id];
-                const isPartial = !isRight && ev?.status === "partial";
                 return (
                   <div
                     key={`${c.id}-${idx}`}
-                    className={cn(
-                      "rounded-xl border p-3.5 sm:p-4 text-sm sm:text-base space-y-2",
-                      isRight
-                        ? "border-emerald-200 bg-emerald-50/40"
-                        : isPartial
-                          ? "border-blue-200 bg-blue-50/40"
-                          : "border-zinc-200 bg-zinc-50/70"
-                    )}
+                    className="rounded-lg border border-zinc-200 p-3 text-sm space-y-1 bg-zinc-50/40"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-zinc-900 text-sm">
+                      <span className="font-semibold text-gray-900 text-xs">
                         Card {idx + 1}
                       </span>
                       <span
                         className={cn(
-                          "px-2.5 py-0.5 rounded-full text-xs font-bold",
-                          isRight
-                            ? "bg-emerald-100 text-emerald-800"
-                            : isPartial
-                              ? "bg-blue-100 text-blue-800"
-                              : "bg-amber-100 text-amber-800"
+                          "text-[11px] font-semibold",
+                          isRight ? "text-emerald-700" : "text-amber-700"
                         )}
                       >
-                        {isRight
-                          ? "Correct (+1)"
-                          : isPartial
-                            ? "Partial (+0.5)"
-                            : "Review"}
+                        {isRight ? "Correct" : "Review"}
                       </span>
                     </div>
-                    <div className="text-zinc-900 font-semibold">
-                      <MathMarkdown content={c.front} size="normal" />
-                    </div>
-                    {userAns && (
-                      <div className="text-sm text-zinc-700">
-                        <span className="font-semibold text-zinc-900">
-                          Your answer:{" "}
-                        </span>
-                        {userAns}
-                      </div>
-                    )}
-                    <div className="text-zinc-800 bg-white border border-zinc-200/80 rounded-lg p-3">
-                      <span className="block text-xs font-bold uppercase tracking-wide text-blue-800 mb-1">
-                        Solution
-                      </span>
-                      <MathMarkdown content={c.back} size="normal" />
+                    <MathMarkdown
+                      content={c.front}
+                      size="normal"
+                      className="font-medium text-gray-900 [&_p]:my-0"
+                    />
+                    <div className="text-zinc-700 text-xs sm:text-sm pt-1 border-t border-zinc-200/70">
+                      <MathMarkdown
+                        content={c.back}
+                        size="normal"
+                        className="[&_p]:my-0"
+                      />
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
               <button
                 type="button"
                 disabled={isLoading || aiReviewRequested}
                 onClick={handleRequestAiGrading}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition active:scale-95 shadow-sm",
+                  "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition",
                   aiReviewRequested
-                    ? "bg-emerald-600 text-white cursor-default"
+                    ? "bg-emerald-600 text-white"
                     : "bg-blue-600 hover:bg-blue-700 text-white"
                 )}
               >
-                <Send className="h-4 w-4" />
+                <Send className="h-3.5 w-3.5" />
                 <span>
-                  {aiReviewRequested
-                    ? "Sent to AI Tutor"
-                    : "Get AI Score & Solutions"}
+                  {aiReviewRequested ? "Sent to AI" : "Ask AI Tutor"}
                 </span>
               </button>
               <button
                 type="button"
                 onClick={() => handleRestart(false)}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-white hover:bg-zinc-50 text-zinc-800 border border-zinc-300 transition active:scale-95 shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-white hover:bg-zinc-50 text-zinc-700 border border-zinc-200 transition"
               >
-                <RotateCcw className="h-4 w-4" />
-                <span>Restart Deck</span>
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Restart</span>
               </button>
               {reviewIds.size > 0 && (
                 <button
                   type="button"
                   onClick={() => handleRestart(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition active:scale-95 shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 transition"
                 >
-                  <RotateCcw className="h-4 w-4 text-amber-600" />
-                  <span>Practice Review Cards ({reviewIds.size})</span>
+                  <span>Review ({reviewIds.size})</span>
                 </button>
               )}
             </div>
@@ -785,41 +650,38 @@ export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
         )}
       </div>
 
-      {/* Footer Navigation Bar */}
+      {/* Simple Footer */}
       {!isCompleted && (
-        <div className="p-3.5 sm:p-4 bg-zinc-50 border-t border-zinc-200 flex flex-wrap items-center justify-between gap-2">
+        <div className="px-4 py-3 bg-zinc-50 border-t border-zinc-200 flex items-center justify-between gap-2">
           <button
             type="button"
             disabled={safeIndex === 0}
             onClick={handlePrev}
             className={cn(
-              "inline-flex items-center gap-1 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold border transition active:scale-95",
+              "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border transition",
               safeIndex === 0
                 ? "bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed"
-                : "bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-300 shadow-sm"
+                : "bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-200"
             )}
           >
             <ChevronLeft className="h-4 w-4" />
-            <span>Previous</span>
+            <span>Prev</span>
           </button>
 
           <button
             type="button"
             onClick={handleFlip}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 shadow-sm transition active:scale-95"
+            className="text-xs font-semibold text-blue-600 hover:text-blue-700"
           >
-            <RotateCw className="h-4 w-4" />
-            <span>{isFlipped ? "Show Question" : "Flip Answer"}</span>
+            {isFlipped ? "Show Question" : "Flip"}
           </button>
 
           <button
             type="button"
             onClick={handleNext}
-            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition active:scale-95"
+            className="inline-flex items-center gap-1 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white transition"
           >
-            <span>
-              {safeIndex < totalCards - 1 ? "Next Card" : "Finish & Score"}
-            </span>
+            <span>{safeIndex < totalCards - 1 ? "Next" : "Finish"}</span>
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>

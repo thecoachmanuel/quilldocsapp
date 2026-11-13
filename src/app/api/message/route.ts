@@ -25,7 +25,6 @@ import {
   parseQuizData,
 } from "@/lib/interactive-content";
 import {
-  computeExamMissingCounts,
   extractRequestedQuestionCounts,
   mergeAndFitExamCounts,
   mergeAndFitFlashcardCounts,
@@ -616,15 +615,15 @@ ${singlePageConstraint}
     });
 
     const estMcqCount = isExamRequest
-      ? (requestedCounts?.mcqCount ?? requestedCounts?.totalCount ?? 10)
+      ? (requestedCounts?.mcqCount ?? requestedCounts?.totalCount ?? 8)
       : (requestedCounts?.totalCount ?? 5);
     const estTheoryCount = isExamRequest
-      ? (requestedCounts?.theoryCount ?? 0)
+      ? (requestedCounts?.theoryCount ?? 2)
       : 0;
 
     const dynamicPracticeMaxTokens = Math.min(
-      isPro ? 5800 : 5000,
-      Math.max(1800, 450 + estMcqCount * 115 + estTheoryCount * 220)
+      isPro ? 3200 : 2800,
+      Math.max(1500, 400 + estMcqCount * 105 + estTheoryCount * 200)
     );
 
     let countTurnHint = "";
@@ -637,7 +636,7 @@ ${singlePageConstraint}
             }`
           : requestedCounts?.totalCount
             ? `total questions across mcqQuestions + theoryQuestions = EXACTLY ${requestedCounts.totalCount}`
-            : `"mcqQuestions": 10 items`;
+            : `"mcqQuestions": 8 items`;
 
       const exactTheoryLine =
         requestedCounts?.theoryCount !== null &&
@@ -647,9 +646,9 @@ ${singlePageConstraint}
             }`
           : requestedCounts?.totalCount
             ? ""
-            : `"theoryQuestions": 4 items`;
+            : `"theoryQuestions": 2 items`;
 
-      countTurnHint = `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". STRICT EXACT COUNT REQUIREMENT: ${[exactMcqLine, exactTheoryLine].filter(Boolean).join("; ")}. Write EVERY SINGLE question in full—never abbreviate or skip items. Keep question stems, options, and solutions crisp and concise.]`;
+      countTurnHint = `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". STRICT EXACT COUNT REQUIREMENT: ${[exactMcqLine, exactTheoryLine].filter(Boolean).join("; ")}. Keep question stems, options, and solutions crisp and concise so all items complete in one fast pass.]`;
     } else if (
       requestedCounts?.hasExplicitCount &&
       requestedCounts.totalCount
@@ -658,7 +657,7 @@ ${singlePageConstraint}
         requestedCounts.kind === "flashcards" ? "flashcards" : "quiz";
       const arrName =
         requestedCounts.kind === "flashcards" ? "cards" : "questions";
-      countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}". Write all ${requestedCounts.totalCount} items completely—never stop early or abbreviate.]`;
+      countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}". Keep each item crisp and complete.]`;
     }
 
     const promptMessages =
@@ -753,57 +752,6 @@ ${singlePageConstraint}
               let examData = parseExamData(pass1Raw);
               if (examData) {
                 ensureOpenedFence();
-                for (let attempt = 0; attempt < 2; attempt++) {
-                  const { missingMcq, missingTheory } = computeExamMissingCounts(
-                    examData,
-                    requestedCounts
-                  );
-                  if (missingMcq === 0 && missingTheory === 0) break;
-
-                  const existingStems = [
-                    ...examData.mcqQuestions.map((q) =>
-                      q.question.slice(0, 65)
-                    ),
-                    ...examData.theoryQuestions.map((q) =>
-                      q.question.slice(0, 65)
-                    ),
-                  ]
-                    .slice(-20)
-                    .join(" | ");
-
-                  const topUpPrompt = `Continue generating ONLY the remaining unique exam questions strictly grounded in the document context.
-Need EXACTLY ${missingMcq} more "mcqQuestions" (4 options A-D each) and EXACTLY ${missingTheory} more "theoryQuestions".
-Do NOT repeat these already-generated questions: [${existingStems}].
-Return ONLY valid JSON inside \`\`\`exam { "requestedFormats": ["${requestedExamFormat}"], "mcqQuestions": [...], "theoryQuestions": [...] } \`\`\` with ZERO prose.`;
-
-                  const topUpRes = await createCompletionWithFallback({
-                    messages: [
-                      { role: "system" as const, content: systemPrompt },
-                      {
-                        role: "user" as const,
-                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
-                      },
-                    ],
-                    temperature: 0.2,
-                    max_tokens: Math.min(
-                      4500,
-                      Math.max(900, 350 + missingMcq * 115 + missingTheory * 220)
-                    ),
-                  }).catch(() => null);
-
-                  if (!topUpRes) break;
-                  const extraRaw = await readStreamToString(topUpRes.response);
-                  const extraExam = parseExamData(extraRaw);
-                  if (!extraExam) break;
-                  examData = mergeAndFitExamCounts(
-                    examData,
-                    extraExam,
-                    requestedCounts.mcqCount,
-                    requestedCounts.theoryCount,
-                    requestedCounts.totalCount
-                  );
-                }
-
                 examData = mergeAndFitExamCounts(
                   examData,
                   null,
@@ -821,45 +769,6 @@ Return ONLY valid JSON inside \`\`\`exam { "requestedFormats": ["${requestedExam
               let quizData = parseQuizData(pass1Raw);
               if (quizData) {
                 ensureOpenedFence();
-                for (let attempt = 0; attempt < 2; attempt++) {
-                  const missing = Math.max(
-                    0,
-                    requestedCounts.totalCount - quizData.questions.length
-                  );
-                  if (missing === 0) break;
-
-                  const existingStems = quizData.questions
-                    .map((q) => q.question.slice(0, 65))
-                    .slice(-20)
-                    .join(" | ");
-
-                  const topUpPrompt = `Generate ONLY ${missing} MORE unique multiple-choice quiz questions grounded in the document context.
-Do NOT repeat these existing questions: [${existingStems}].
-Return ONLY valid JSON inside \`\`\`quiz { "questions": [...] } \`\`\` with ZERO extra prose.`;
-
-                  const topUpRes = await createCompletionWithFallback({
-                    messages: [
-                      { role: "system" as const, content: systemPrompt },
-                      {
-                        role: "user" as const,
-                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
-                      },
-                    ],
-                    temperature: 0.2,
-                    max_tokens: Math.min(4500, Math.max(800, 300 + missing * 115)),
-                  }).catch(() => null);
-
-                  if (!topUpRes) break;
-                  const extraRaw = await readStreamToString(topUpRes.response);
-                  const extraQuiz = parseQuizData(extraRaw);
-                  if (!extraQuiz) break;
-                  quizData = mergeAndFitQuizCounts(
-                    quizData,
-                    extraQuiz,
-                    requestedCounts.totalCount
-                  );
-                }
-
                 quizData = mergeAndFitQuizCounts(
                   quizData,
                   null,
@@ -874,45 +783,6 @@ Return ONLY valid JSON inside \`\`\`quiz { "questions": [...] } \`\`\` with ZERO
               let flashData = parseFlashcardsData(pass1Raw);
               if (flashData) {
                 ensureOpenedFence();
-                for (let attempt = 0; attempt < 2; attempt++) {
-                  const missing = Math.max(
-                    0,
-                    requestedCounts.totalCount - flashData.cards.length
-                  );
-                  if (missing === 0) break;
-
-                  const existingFronts = flashData.cards
-                    .map((c) => c.front.slice(0, 65))
-                    .slice(-20)
-                    .join(" | ");
-
-                  const topUpPrompt = `Generate ONLY ${missing} MORE unique active-recall flashcards grounded in the document context.
-Do NOT repeat these existing flashcards: [${existingFronts}].
-Return ONLY valid JSON inside \`\`\`flashcards { "cards": [...] } \`\`\` with ZERO extra prose.`;
-
-                  const topUpRes = await createCompletionWithFallback({
-                    messages: [
-                      { role: "system" as const, content: systemPrompt },
-                      {
-                        role: "user" as const,
-                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
-                      },
-                    ],
-                    temperature: 0.2,
-                    max_tokens: Math.min(4200, Math.max(700, 250 + missing * 95)),
-                  }).catch(() => null);
-
-                  if (!topUpRes) break;
-                  const extraRaw = await readStreamToString(topUpRes.response);
-                  const extraFlash = parseFlashcardsData(extraRaw);
-                  if (!extraFlash) break;
-                  flashData = mergeAndFitFlashcardCounts(
-                    flashData,
-                    extraFlash,
-                    requestedCounts.totalCount
-                  );
-                }
-
                 flashData = mergeAndFitFlashcardCounts(
                   flashData,
                   null,

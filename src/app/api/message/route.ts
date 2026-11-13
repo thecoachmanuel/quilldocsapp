@@ -25,6 +25,7 @@ import {
   parseQuizData,
 } from "@/lib/interactive-content";
 import {
+  computeExamMissingCounts,
   extractRequestedQuestionCounts,
   mergeAndFitExamCounts,
   mergeAndFitFlashcardCounts,
@@ -635,7 +636,7 @@ ${singlePageConstraint}
               requestedCounts.mcqCount === 0 ? " (empty array [])" : ""
             }`
           : requestedCounts?.totalCount
-            ? `total questions across mcqQuestions + theoryQuestions = EXACTLY ${requestedCounts.totalCount}`
+            ? `"mcqQuestions": ~70% of the ${requestedCounts.totalCount} questions`
             : `"mcqQuestions": 8 items`;
 
       const exactTheoryLine =
@@ -645,10 +646,20 @@ ${singlePageConstraint}
               requestedCounts.theoryCount === 0 ? " (empty array [])" : ""
             }`
           : requestedCounts?.totalCount
-            ? ""
+            ? `"theoryQuestions": ~30% (at least 2 items) so total mcqQuestions + theoryQuestions = EXACTLY ${requestedCounts.totalCount}`
             : `"theoryQuestions": 2 items`;
 
-      countTurnHint = `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". STRICT EXACT COUNT REQUIREMENT: ${[exactMcqLine, exactTheoryLine].filter(Boolean).join("; ")}. Keep question stems, options, and solutions crisp and concise so all items complete in one fast pass.]`;
+      const needTheory =
+        (requestedCounts?.theoryCount ?? (requestedCounts?.totalCount ? 2 : 2)) > 0;
+      const bothSectionsNote = needTheory
+        ? ` MANDATORY: Populate BOTH top-level "mcqQuestions" AND top-level "theoryQuestions" arrays in the same JSON object (do NOT wrap inside "sections" and do NOT omit "theoryQuestions").`
+        : "";
+      const conciseNote =
+        estMcqCount >= 12
+          ? " Keep each MCQ stem, option, and explanation concise (1 short sentence) so both MCQs and theory questions complete without truncation."
+          : " Keep question stems, options, and solutions crisp and concise so all items complete in one fast pass.";
+
+      countTurnHint = `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required top-level keys: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". STRICT EXACT COUNT REQUIREMENT: ${[exactMcqLine, exactTheoryLine].filter(Boolean).join("; ")}.${bothSectionsNote}${conciseNote}]`;
     } else if (
       requestedCounts?.hasExplicitCount &&
       requestedCounts.totalCount
@@ -657,7 +668,11 @@ ${singlePageConstraint}
         requestedCounts.kind === "flashcards" ? "flashcards" : "quiz";
       const arrName =
         requestedCounts.kind === "flashcards" ? "cards" : "questions";
-      countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}". Keep each item crisp and complete.]`;
+      const conciseQuizNote =
+        requestedCounts.totalCount >= 12
+          ? " Keep each question, options, and explanation brief (1 short sentence) so all items finish cleanly."
+          : " Keep each item crisp and complete.";
+      countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}".${conciseQuizNote}]`;
     }
 
     const promptMessages =
@@ -794,9 +809,62 @@ ${singlePageConstraint}
               let examData = parseExamData(pass1Raw);
               if (examData) {
                 ensureOpenedFence();
+                const { missingMcq, missingTheory } = computeExamMissingCounts(
+                  examData,
+                  requestedCounts
+                );
+                let extraExam: ReturnType<typeof parseExamData> = null;
+                const needTheoryFill =
+                  (requestedCounts.theoryCount ?? 0) > 0 && missingTheory > 0;
+                const needMcqFill =
+                  (requestedCounts.mcqCount ?? 0) > 0 &&
+                  examData.mcqQuestions.length === 0 &&
+                  missingMcq > 0;
+
+                if (needTheoryFill || needMcqFill) {
+                  try {
+                    const fillPrompt = [
+                      needMcqFill
+                        ? `Generate EXACTLY ${missingMcq} multiple-choice question(s) in "mcqQuestions"`
+                        : null,
+                      needTheoryFill
+                        ? `Generate EXACTLY ${missingTheory} theory/essay question(s) (with "question", "subQuestions", "marks", and concise "solution") in "theoryQuestions"`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" and ");
+                    const fillCompletion = await createCompletionWithFallback({
+                      messages: [
+                        ...messages,
+                        { role: "assistant" as const, content: pass1Raw },
+                        {
+                          role: "user" as const,
+                          content: `You omitted required section items. ${fillPrompt}. Output ONLY a valid \`\`\`exam JSON block using the same document context (no duplicates).`,
+                        },
+                      ],
+                      temperature: 0.15,
+                      max_tokens: Math.min(
+                        1800,
+                        400 +
+                          (needMcqFill ? missingMcq * 130 : 0) +
+                          (needTheoryFill ? missingTheory * 260 : 0)
+                      ),
+                    });
+                    const pass2Raw = await readStreamToString(
+                      fillCompletion.response
+                    );
+                    extraExam = parseExamData(pass2Raw);
+                  } catch (fillErr) {
+                    console.warn(
+                      "[message/route] Theory/MCQ fill pass skipped:",
+                      fillErr
+                    );
+                  }
+                }
+
                 examData = mergeAndFitExamCounts(
                   examData,
-                  null,
+                  extraExam,
                   requestedCounts.mcqCount,
                   requestedCounts.theoryCount,
                   requestedCounts.totalCount

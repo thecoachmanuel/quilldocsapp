@@ -219,7 +219,9 @@ function recoverTruncatedPayload(jsonStr: string): any {
 
   const isExam =
     /"mcqQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"mcq_questions"\s*:\s*\[/i.test(jsonStr) ||
     /"theoryQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"theory_questions"\s*:\s*\[/i.test(jsonStr) ||
     /"multipleChoice"\s*:\s*\[/i.test(jsonStr) ||
     /"essayQuestions"\s*:\s*\[/i.test(jsonStr) ||
     /"objectiveQuestions"\s*:\s*\[/i.test(jsonStr) ||
@@ -228,17 +230,27 @@ function recoverTruncatedPayload(jsonStr: string): any {
   if (isExam) {
     const mcqQuestions = [
       ...collectCompleteArrayObjects(jsonStr, "mcqQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "mcq_questions"),
       ...collectCompleteArrayObjects(jsonStr, "multipleChoice"),
+      ...collectCompleteArrayObjects(jsonStr, "multiple_choice"),
       ...collectCompleteArrayObjects(jsonStr, "mcqs"),
       ...collectCompleteArrayObjects(jsonStr, "objectiveQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "objective_questions"),
       ...collectCompleteArrayObjects(jsonStr, "objectives"),
       ...collectCompleteArrayObjects(jsonStr, "sectionA"),
+      ...collectCompleteArrayObjects(jsonStr, "partA"),
     ];
     const theoryQuestions = [
       ...collectCompleteArrayObjects(jsonStr, "theoryQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "theory_questions"),
       ...collectCompleteArrayObjects(jsonStr, "essayQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "essay_questions"),
       ...collectCompleteArrayObjects(jsonStr, "theory"),
+      ...collectCompleteArrayObjects(jsonStr, "structuredQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "writtenQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "openEndedQuestions"),
       ...collectCompleteArrayObjects(jsonStr, "sectionB"),
+      ...collectCompleteArrayObjects(jsonStr, "partB"),
     ];
     if (mcqQuestions.length === 0 && theoryQuestions.length === 0) return null;
 
@@ -844,7 +856,10 @@ export function parseExamData(raw: string): ExamPaperData | null {
       : parsedRaw?.data &&
           typeof parsedRaw.data === "object" &&
           (parsedRaw.data.mcqQuestions ||
+            parsedRaw.data.mcq_questions ||
             parsedRaw.data.theoryQuestions ||
+            parsedRaw.data.theory_questions ||
+            parsedRaw.data.sections ||
             parsedRaw.data.sectionA ||
             parsedRaw.data.sectionB)
         ? parsedRaw.data
@@ -854,22 +869,75 @@ export function parseExamData(raw: string): ExamPaperData | null {
     return parseMarkdownExam(trimmed);
   }
 
-  const rawMcqs =
+  let rawMcqs: any[] =
     parsed.mcqQuestions ??
+    parsed.mcq_questions ??
     parsed.multipleChoice ??
+    parsed.multiple_choice ??
     parsed.mcqs ??
     parsed.objectiveQuestions ??
+    parsed.objective_questions ??
     parsed.objectives ??
     parsed.sectionA ??
+    parsed.partA ??
     [];
 
-  const rawTheory =
+  let rawTheory: any[] =
     parsed.theoryQuestions ??
+    parsed.theory_questions ??
     parsed.essayQuestions ??
+    parsed.essay_questions ??
     parsed.theory ??
     parsed.structuredQuestions ??
+    parsed.structured_questions ??
+    parsed.writtenQuestions ??
+    parsed.openEndedQuestions ??
     parsed.sectionB ??
+    parsed.partB ??
     [];
+
+  // Support AI outputs shaped as { sections: [{ type: "mcq", questions: [...] }, { type: "theory", questions: [...] }] }
+  if (Array.isArray(parsed.sections)) {
+    const secMcqs: any[] = [];
+    const secTheory: any[] = [];
+    for (const sec of parsed.sections) {
+      if (!sec || typeof sec !== "object") continue;
+      const items = Array.isArray(sec.questions)
+        ? sec.questions
+        : Array.isArray(sec.items)
+          ? sec.items
+          : [];
+      if (items.length === 0) continue;
+      const secHint = `${sec.type || ""} ${sec.title || ""} ${sec.name || ""}`.toLowerCase();
+      const looksTheory =
+        /\b(?:theory|essay|structured|subjective|written|open[- ]ended|long[- ]answer|section\s*b|part\s*b)\b/i.test(
+          secHint
+        );
+      const looksMcq =
+        /\b(?:mcq|multiple[- ]choice|objective|obj|section\s*a|part\s*a)\b/i.test(
+          secHint
+        );
+      if (looksTheory && !looksMcq) {
+        secTheory.push(...items);
+      } else if (looksMcq && !looksTheory) {
+        secMcqs.push(...items);
+      } else {
+        for (const q of items) {
+          if (Array.isArray(q?.options ?? q?.choices ?? q?.answers)) {
+            secMcqs.push(q);
+          } else {
+            secTheory.push(q);
+          }
+        }
+      }
+    }
+    if ((!Array.isArray(rawMcqs) || rawMcqs.length === 0) && secMcqs.length > 0) {
+      rawMcqs = secMcqs;
+    }
+    if ((!Array.isArray(rawTheory) || rawTheory.length === 0) && secTheory.length > 0) {
+      rawTheory = secTheory;
+    }
+  }
 
   if (
     (!Array.isArray(rawMcqs) || rawMcqs.length === 0) &&
@@ -879,10 +947,10 @@ export function parseExamData(raw: string): ExamPaperData | null {
   }
 
   const seenMcqIds = new Set<string>();
-  const mcqQuestions: ExamMcqQuestion[] = rawMcqs
+  const mcqQuestions: ExamMcqQuestion[] = (Array.isArray(rawMcqs) ? rawMcqs : [])
     .map((q: any, idx: number) => {
       if (!q || typeof q !== "object") return null;
-      const questionText = String(q.question || q.prompt || "").trim();
+      const questionText = String(q.question || q.prompt || q.text || q.stem || "").trim();
       const options = extractOptionsList(q.options ?? q.choices ?? q.answers);
       if (!questionText || options.length < 2) return null;
 
@@ -901,16 +969,15 @@ export function parseExamData(raw: string): ExamPaperData | null {
     .filter((q: ExamMcqQuestion | null): q is ExamMcqQuestion => q !== null);
 
   const seenTheoryIds = new Set<string>();
-  const theoryQuestions: ExamTheoryQuestion[] = rawTheory
-    .map((q: any, idx: number) => {
+  const theoryQuestions: ExamTheoryQuestion[] = (Array.isArray(rawTheory) ? rawTheory : [])
+    .map((q: any, idx: number): ExamTheoryQuestion | null => {
       if (!q || typeof q !== "object") return null;
-      const questionText = String(q.question || q.prompt || "").trim();
+      const questionText = String(q.question || q.prompt || q.text || q.stem || "").trim();
       if (!questionText) return null;
 
-      const subQuestions = Array.isArray(q.subQuestions ?? q.parts)
-        ? (q.subQuestions ?? q.parts)
-            .map((p: any) => String(p ?? "").trim())
-            .filter(Boolean)
+      const rawSub = q.subQuestions ?? q.parts;
+      const subQuestions: string[] | undefined = Array.isArray(rawSub)
+        ? rawSub.map((p: any) => String(p ?? "").trim()).filter(Boolean)
         : undefined;
 
       const marksNum = Number(q.marks);
@@ -921,12 +988,20 @@ export function parseExamData(raw: string): ExamPaperData | null {
           subQuestions && subQuestions.length > 0 ? subQuestions : undefined,
         marks: !isNaN(marksNum) && marksNum > 0 ? marksNum : 10,
         solution: String(
-          q.solution || q.answer || q.markingScheme || q.explanation || ""
+          q.solution ||
+            q.sampleAnswer ||
+            q.modelAnswer ||
+            q.markingGuide ||
+            q.markingScheme ||
+            q.rubric ||
+            q.answer ||
+            q.explanation ||
+            ""
         ).trim(),
       };
     })
     .filter(
-      (q: ExamTheoryQuestion | null): q is ExamTheoryQuestion => q !== null
+      (q): q is ExamTheoryQuestion => q !== null
     );
 
   if (mcqQuestions.length === 0 && theoryQuestions.length === 0) {
@@ -996,7 +1071,7 @@ function parseMarkdownExam(text: string): ExamPaperData | null {
   const solutionsArea = solSplit ? solSplit[1].trim() : "";
 
   const sectionBMatch = questionsArea.match(
-    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})SECTION\s*B\b[^\n]*\n([\s\S]+)$/i
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:(?:SECTION|PART)\s*B\b|(?:THEORY|ESSAY|LONG[- ]ANSWER|STRUCTURED)\s+QUESTIONS?)\b[^\n]*\n([\s\S]+)$/i
   );
 
   const mcqSource = sectionBMatch

@@ -44,6 +44,16 @@ export function constructMetadata({
   return {
     title,
     description,
+    applicationName: "QuillDocs",
+    manifest: "/manifest.webmanifest",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: "QuillDocs",
+    },
+    formatDetection: {
+      telephone: false,
+    },
     openGraph: {
       title,
       description,
@@ -59,7 +69,32 @@ export function constructMetadata({
       description,
       images: [image],
     },
-    icons,
+    icons:
+      icons !== "/favicon.ico"
+        ? icons
+        : {
+            icon: [
+              { url: "/favicon.ico" },
+              {
+                url: "/icons/icon-192x192.png",
+                sizes: "192x192",
+                type: "image/png",
+              },
+              {
+                url: "/icons/icon-512x512.png",
+                sizes: "512x512",
+                type: "image/png",
+              },
+            ],
+            apple: [
+              {
+                url: "/apple-touch-icon.png",
+                sizes: "180x180",
+                type: "image/png",
+              },
+            ],
+            shortcut: ["/favicon.ico"],
+          },
     metadataBase: new URL("https://quilldocs.com"),
     ...(noIndex && {
       robots: {

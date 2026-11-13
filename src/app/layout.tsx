@@ -7,6 +7,7 @@ import Providers from "./components/Providers";
 import "react-loading-skeleton/dist/skeleton.css";
 import { Toaster } from "@/components/ui/toaster";
 import "simplebar-react/dist/simplebar.min.css";
+import PwaManager from "./components/PwaManager";
 
 export const metadata = constructMetadata();
 
@@ -42,6 +43,7 @@ export default function RootLayout({
       <Providers>
         <body className={cn("min-h-screen font-sans antialiased grainy")}>
           <Toaster />
+          <PwaManager />
           <Navbar />
           {children}
         </body>

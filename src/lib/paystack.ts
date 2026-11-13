@@ -75,10 +75,61 @@ function buildPaystackInitError(status: number, message?: string): Error {
   return new Error(baseMsg);
 }
 
+function getConfiguredPaystackChannels(currency: PaystackCurrency): string[] {
+  const custom = cleanEnv(process.env.PAYSTACK_CHANNELS);
+  if (custom) {
+    const parsed = custom
+      .split(",")
+      .map((c) => c.trim().toLowerCase())
+      .filter(Boolean);
+    if (parsed.length > 0) {
+      return parsed.includes("card") ? parsed : ["card", ...parsed];
+    }
+  }
+  return currency === "USD"
+    ? ["card"]
+    : ["card", "bank_transfer", "ussd", "bank", "qr"];
+}
+
+async function initializeWithChannelFallback(
+  secretKey: string,
+  payload: Record<string, unknown>,
+  currency: PaystackCurrency
+) {
+  const preferredChannels = getConfiguredPaystackChannels(currency);
+  let attempt = await requestPaystackInitialize(secretKey, {
+    ...payload,
+    channels: preferredChannels,
+  });
+
+  const msg = String(attempt.data?.message || "");
+  if (
+    (!attempt.res.ok || !attempt.data?.status) &&
+    /channel/i.test(msg)
+  ) {
+    // Retry with Card-only in case one of the secondary channels (e.g. qr/ussd) is disabled on the merchant key
+    if (preferredChannels.length > 1) {
+      attempt = await requestPaystackInitialize(secretKey, {
+        ...payload,
+        channels: ["card"],
+      });
+    }
+    const retryMsg = String(attempt.data?.message || "");
+    if ((!attempt.res.ok || !attempt.data?.status) && /channel/i.test(retryMsg)) {
+      console.warn(
+        `[paystack] Explicit channel list rejected (${retryMsg}); falling back to merchant default channels. Verify Card is enabled in Paystack Dashboard -> Preferences.`
+      );
+      attempt = await requestPaystackInitialize(secretKey, payload);
+    }
+  }
+
+  return attempt;
+}
+
 /**
  * Initializes a checkout session with Paystack in NGN or USD (when enabled on Paystack).
- * Supports Nigerian local methods in NGN and international cards / Apple Pay in USD,
- * falling back to NGN international card checkout only if USD currency is rejected by the key.
+ * Explicitly requests Card payments (plus local methods in NGN) and gracefully retries if
+ * secondary channels or USD currency are not enabled on the merchant's Paystack account.
  */
 export async function initializePaystackTransaction(
   params: InitializePaystackParams
@@ -121,13 +172,17 @@ export async function initializePaystackTransaction(
     ],
   };
 
-  let { res, data } = await requestPaystackInitialize(secretKey, {
-    email,
-    amount: primaryAmount,
-    currency: requestedCurrency,
-    callback_url: params.callbackUrl,
-    metadata: baseMetadata,
-  });
+  let { res, data } = await initializeWithChannelFallback(
+    secretKey,
+    {
+      email,
+      amount: primaryAmount,
+      currency: requestedCurrency,
+      callback_url: params.callbackUrl,
+      metadata: baseMetadata,
+    },
+    requestedCurrency
+  );
 
   const msgText = String(data?.message || "");
   const isCurrencyRejection =
@@ -144,17 +199,21 @@ export async function initializePaystackTransaction(
       `[paystack] USD currency rejected by Paystack (${msgText}); retrying international checkout in NGN.`
     );
     settledCurrency = "NGN";
-    const fallbackRes = await requestPaystackInitialize(secretKey, {
-      email,
-      amount: Math.round(params.fallbackAmountKobo!),
-      currency: "NGN",
-      callback_url: params.callbackUrl,
-      metadata: {
-        ...baseMetadata,
-        billingCurrency: "NGN",
-        requestedCurrency: "USD",
+    const fallbackRes = await initializeWithChannelFallback(
+      secretKey,
+      {
+        email,
+        amount: Math.round(params.fallbackAmountKobo!),
+        currency: "NGN",
+        callback_url: params.callbackUrl,
+        metadata: {
+          ...baseMetadata,
+          billingCurrency: "NGN",
+          requestedCurrency: "USD",
+        },
       },
-    });
+      "NGN"
+    );
     res = fallbackRes.res;
     data = fallbackRes.data;
   }

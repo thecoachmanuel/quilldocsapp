@@ -44,6 +44,12 @@ export const InteractiveExam: React.FC<InteractiveExamProps> = ({ data }) => {
     data.theoryQuestions.some((q) => Boolean(q.solution)) ||
     data.mcqQuestions.some((q) => Boolean(q.explanation));
 
+  // Enforce one output format at a time: Word (.docx) by default, PDF only if requested
+  const activeFormat: "docx" | "pdf" =
+    data.requestedFormats?.[0] === "pdf" ? "pdf" : "docx";
+  const formatExtLabel = activeFormat === "pdf" ? ".PDF" : ".DOCX";
+  const formatNameLabel = activeFormat === "pdf" ? "PDF" : "Word (.DOCX)";
+
   const handleDownload = async (
     kind: ExamExportKind,
     format: "docx" | "pdf"
@@ -71,13 +77,13 @@ export const InteractiveExam: React.FC<InteractiveExamProps> = ({ data }) => {
       className="my-3 w-full max-w-full rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden not-prose transition-all font-sans"
     >
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-50 via-white to-indigo-50/70 border-b border-zinc-200 p-4 sm:p-5 flex flex-wrap items-start justify-between gap-3">
+      <div className="bg-white border-b border-zinc-200 p-4 sm:p-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-white shrink-0 shadow-sm mt-0.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white shrink-0 shadow-sm mt-0.5">
             <GraduationCap className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <h4 className="text-base sm:text-lg font-bold text-zinc-900 break-words">
+            <h4 className="text-base sm:text-lg font-bold text-gray-900 break-words">
               {data.title || "Standard Examination Paper"}
             </h4>
             <p className="text-xs sm:text-sm text-zinc-600 font-medium mt-0.5">
@@ -91,7 +97,7 @@ export const InteractiveExam: React.FC<InteractiveExamProps> = ({ data }) => {
                 .join(" • ")}
             </p>
             <p className="text-xs text-zinc-500 mt-1">
-              Export format: Times New Roman • 12pt Font • 1.5 Line Spacing (A4)
+              {formatNameLabel} · Times New Roman · 12pt Font · 1.5 Line Spacing
             </p>
           </div>
         </div>
@@ -99,7 +105,7 @@ export const InteractiveExam: React.FC<InteractiveExamProps> = ({ data }) => {
         <button
           type="button"
           onClick={() => setShowPreview((prev) => !prev)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-zinc-50 text-zinc-700 border border-zinc-300 shadow-sm transition shrink-0"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-zinc-50 text-zinc-700 border border-zinc-200 shadow-sm transition shrink-0"
         >
           <Eye className="h-4 w-4 text-blue-600" />
           <span>{showPreview ? "Hide Preview" : "Show Preview"}</span>
@@ -111,75 +117,49 @@ export const InteractiveExam: React.FC<InteractiveExamProps> = ({ data }) => {
         </button>
       </div>
 
-      {/* Export Download Action Bar */}
-      <div className="p-4 sm:p-5 bg-zinc-50/80 border-b border-zinc-200 space-y-3">
+      {/* Export Download Action Bar (Single Format at a Time) */}
+      <div className="p-4 sm:p-5 bg-zinc-50/70 border-b border-zinc-200 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-            <span>Question Paper File</span>
+            <span>Question Paper ({formatExtLabel})</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={busyKey !== null}
-              onClick={() => handleDownload("questions", "docx")}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition active:scale-95 disabled:opacity-60"
+              onClick={() => handleDownload("questions", activeFormat)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition active:scale-95 disabled:opacity-60"
             >
-              {busyKey === "questions-docx" ? (
+              {busyKey === `questions-${activeFormat}` ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              <span>Download Questions (.DOCX)</span>
-            </button>
-            <button
-              type="button"
-              disabled={busyKey !== null}
-              onClick={() => handleDownload("questions", "pdf")}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-zinc-900 hover:bg-zinc-800 text-white shadow-sm transition active:scale-95 disabled:opacity-60"
-            >
-              {busyKey === "questions-pdf" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              <span>Download Questions (.PDF)</span>
+              <span>Download Questions ({formatExtLabel})</span>
             </button>
           </div>
         </div>
 
         {hasSolutions && (
           <div className="pt-2.5 border-t border-zinc-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-              <span>Separate Solutions / Marking Guide</span>
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+              <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+              <span>Separate Solutions / Marking Guide ({formatExtLabel})</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={busyKey !== null}
-                onClick={() => handleDownload("solutions", "docx")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 disabled:opacity-60"
+                onClick={() => handleDownload("solutions", activeFormat)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 shadow-sm transition active:scale-95 disabled:opacity-60"
               >
-                {busyKey === "solutions-docx" ? (
+                {busyKey === `solutions-${activeFormat}` ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                <span>Download Solutions (.DOCX)</span>
-              </button>
-              <button
-                type="button"
-                disabled={busyKey !== null}
-                onClick={() => handleDownload("solutions", "pdf")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-sm transition active:scale-95 disabled:opacity-60"
-              >
-                {busyKey === "solutions-pdf" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-                <span>Download Solutions (.PDF)</span>
+                <span>Download Solutions ({formatExtLabel})</span>
               </button>
             </div>
           </div>

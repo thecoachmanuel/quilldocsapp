@@ -170,18 +170,27 @@ function Messages({
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 max-w-md">
                   {[
                     {
-                      text: "Generate exam paper (10 MCQ, 3 Theory) with solutions",
+                      text: "Generate exam paper",
                       icon: GraduationCap,
+                      opensModal: true,
                     },
                     { text: "Quiz me across these documents", icon: HelpCircle },
                     { text: "Create comparative flashcards", icon: BookOpen },
                     { text: "Compare key statistics & data", icon: Sigma },
                     { text: "Synthesize key points step-by-step", icon: Globe },
-                  ].map(({ text: promptText, icon: PromptIcon }) => (
+                  ].map(({ text: promptText, icon: PromptIcon, opensModal }) => (
                     <button
                       key={promptText}
                       type="button"
-                      onClick={() => setInputValue(promptText)}
+                      onClick={() => {
+                        if (opensModal) {
+                          window.dispatchEvent(
+                            new CustomEvent("quill:open-exam-modal")
+                          );
+                        } else {
+                          setInputValue(promptText);
+                        }
+                      }}
                       className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-sm"
                     >
                       <PromptIcon className="h-3 w-3 text-blue-600 shrink-0" />
@@ -200,18 +209,27 @@ function Messages({
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 max-w-md">
                   {[
                     {
-                      text: "Generate exam paper (10 MCQ, 3 Theory) with solutions",
+                      text: "Generate exam paper",
                       icon: GraduationCap,
+                      opensModal: true,
                     },
                     { text: "Quiz me on this document", icon: HelpCircle },
                     { text: "Create study flashcards", icon: BookOpen },
                     { text: "Explain key formulas & statistics", icon: Sigma },
                     { text: "Teach me this document step-by-step", icon: Globe },
-                  ].map(({ text: promptText, icon: PromptIcon }) => (
+                  ].map(({ text: promptText, icon: PromptIcon, opensModal }) => (
                     <button
                       key={promptText}
                       type="button"
-                      onClick={() => setInputValue(promptText)}
+                      onClick={() => {
+                        if (opensModal) {
+                          window.dispatchEvent(
+                            new CustomEvent("quill:open-exam-modal")
+                          );
+                        } else {
+                          setInputValue(promptText);
+                        }
+                      }}
                       className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-sm"
                     >
                       <PromptIcon className="h-3 w-3 text-blue-600 shrink-0" />

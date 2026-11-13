@@ -936,7 +936,13 @@ export function parseExamData(raw: string): ExamPaperData | null {
     ? parsed.requestedFormats
         .map((f: any) => String(f ?? "").toLowerCase().trim())
         .filter((f: string): f is "docx" | "pdf" => f === "docx" || f === "pdf")
-    : undefined;
+    : [];
+
+  // Default to Word (.docx) only; only use PDF when explicitly requested (one format at a time).
+  const singleFormat: ("docx" | "pdf")[] =
+    rawFormats.includes("pdf") && !rawFormats.includes("docx")
+      ? ["pdf"]
+      : ["docx"];
 
   return {
     title: String(parsed.title || "Standard Examination Paper").trim(),
@@ -952,8 +958,7 @@ export function parseExamData(raw: string): ExamPaperData | null {
             "Show all relevant workings, formulas, and units where applicable.",
           ],
     includeSolutions,
-    requestedFormats:
-      rawFormats && rawFormats.length > 0 ? rawFormats : ["docx", "pdf"],
+    requestedFormats: singleFormat,
     mcqQuestions,
     theoryQuestions,
   };
@@ -1076,6 +1081,9 @@ function parseMarkdownExam(text: string): ExamPaperData | null {
     theoryQuestions.some((q) => Boolean(q.solution)) ||
     Boolean(parsedMcq?.hasAnswerKey);
 
+  const wantsPdfOnly =
+    /\bpdf\b/i.test(text) && !/\b(docx|word\s*(?:doc|document))\b/i.test(text);
+
   return {
     title: titleMatch
       ? titleMatch[1].replace(/[#*]/g, "").trim()
@@ -1087,7 +1095,7 @@ function parseMarkdownExam(text: string): ExamPaperData | null {
       "Show all relevant workings, formulas, and units where applicable.",
     ],
     includeSolutions,
-    requestedFormats: ["docx", "pdf"],
+    requestedFormats: wantsPdfOnly ? ["pdf"] : ["docx"],
     mcqQuestions,
     theoryQuestions,
   };

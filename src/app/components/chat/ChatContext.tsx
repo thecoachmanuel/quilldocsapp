@@ -66,6 +66,7 @@ export const ChatContextProvider = ({
   );
   const { toast } = useToast();
   const backUpMessage = useRef("");
+  const inFlightRef = useRef(false);
   const utils = trpc.useUtils();
 
   const { mutate: sendMessage } = useMutation({
@@ -154,82 +155,87 @@ export const ChatContextProvider = ({
     },
 
     onSuccess: async (stream) => {
-      setIsLoading(false);
+      try {
+        if (!stream) {
+          toast({
+            title: "There was a problem sending this message",
+            description: "Please refresh this page and try again.",
+            variant: "destructive",
+          });
+          return;
+        }
 
-      if (!stream) {
-        toast({
-          title: "There was a problem sending this message",
-          description: "Please refresh this page and try again.",
-          variant: "destructive",
-        });
-        return;
-      }
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let done = false;
 
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
+        let accResponse = "";
 
-      let accResponse = "";
+        while (!done) {
+          const { value, done: doneReading } = await reader.read();
+          done = doneReading;
+          const chunkValue = decoder.decode(value, { stream: !done });
+          accResponse += chunkValue;
 
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        const chunkValue = decoder.decode(value, { stream: !done });
-        accResponse += chunkValue;
-
-        utils.getFileMessages.setInfiniteData(
-          { fileId, limit: INFINITE_QUERY_LIMIT },
-          (old) => {
-            if (!old || old.pages.length === 0) {
-              return { pages: [], pageParams: [] };
-            }
-
-            const isAiResponseCreated = old.pages.some((page) =>
-              page.messages.some((message: any) => message.id === "ai-response")
-            );
-
-            const updatedPages = old.pages.map((page, idx) => {
-              if (idx === 0) {
-                let updatedMessages;
-                if (!isAiResponseCreated) {
-                  updatedMessages = [
-                    {
-                      createdAt: new Date().toISOString(),
-                      id: "ai-response",
-                      text: accResponse,
-                      isUserMessage: false,
-                    },
-
-                    ...page.messages,
-                  ];
-                } else {
-                  updatedMessages = page.messages.map((message: any) => {
-                    if (message.id === "ai-response") {
-                      return {
-                        ...message,
-                        text: accResponse,
-                      };
-                    }
-                    return message;
-                  });
-                }
-
-                return {
-                  ...page,
-                  messages: updatedMessages,
-                };
+          utils.getFileMessages.setInfiniteData(
+            { fileId, limit: INFINITE_QUERY_LIMIT },
+            (old) => {
+              if (!old || old.pages.length === 0) {
+                return { pages: [], pageParams: [] };
               }
 
-              return page;
-            });
+              const isAiResponseCreated = old.pages.some((page) =>
+                page.messages.some((message: any) => message.id === "ai-response")
+              );
 
-            return { ...old, pages: updatedPages };
-          }
-        );
+              const updatedPages = old.pages.map((page, idx) => {
+                if (idx === 0) {
+                  let updatedMessages;
+                  if (!isAiResponseCreated) {
+                    updatedMessages = [
+                      {
+                        createdAt: new Date().toISOString(),
+                        id: "ai-response",
+                        text: accResponse,
+                        isUserMessage: false,
+                      },
+
+                      ...page.messages,
+                    ];
+                  } else {
+                    updatedMessages = page.messages.map((message: any) => {
+                      if (message.id === "ai-response") {
+                        return {
+                          ...message,
+                          text: accResponse,
+                        };
+                      }
+                      return message;
+                    });
+                  }
+
+                  return {
+                    ...page,
+                    messages: updatedMessages,
+                  };
+                }
+
+                return page;
+              });
+
+              return { ...old, pages: updatedPages };
+            }
+          );
+        }
+      } finally {
+        inFlightRef.current = false;
+        setIsLoading(false);
       }
     },
 
     onError: (err: any, _, context) => {
+      inFlightRef.current = false;
+      setIsLoading(false);
       setMessage(backUpMessage.current);
       if (context?.previousData) {
         utils.getFileMessages.setInfiniteData(
@@ -245,6 +251,7 @@ export const ChatContextProvider = ({
     },
 
     onSettled: async () => {
+      inFlightRef.current = false;
       setIsLoading(false);
       await utils.getFileMessages.invalidate({ fileId });
     },
@@ -256,7 +263,9 @@ export const ChatContextProvider = ({
 
   const submitPrompt = (text: string) => {
     const clean = text.trim();
-    if (!clean || isLoading) return;
+    if (!clean || isLoading || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setIsLoading(true);
     sendMessage({ message: clean });
   };
 

@@ -468,9 +468,9 @@ export async function POST(req: NextRequest) {
     - Grade every item accurately and fairly (for typed flashcard responses, accept equivalent phrasing, valid unit conversions, or mathematically equivalent forms).
     - Open with a clear **Final Score** (\`X / Y\` and percentage) and a structured breakdown showing each item's status (**Correct** vs **Incorrect / Needs Review**).
     - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.
-- Standard Examination Papers (DOCX & PDF Export in Times New Roman 12pt, 1.5 Spacing):
+- Standard Examination Papers (Word .DOCX default; PDF only if requested — ONE format at a time):
   * Whenever the user requests formal/standard **exam questions**, an **examination paper**, **theory / essay questions**, specific counts of **multiple choice (MCQ) + theory** questions, **docx/pdf downloadable questions**, or a **separate solutions / marking scheme**:
-    - ALWAYS output the full examination inside a \`\`\`exam fenced JSON block using this exact schema:
+    - ALWAYS output ONLY the examination inside a single \`\`\`exam fenced JSON block with ZERO introductory or trailing prose for fast streaming:
 \`\`\`exam
 {
   "title": "Midterm / Final Examination: [Topic or Document Name]",
@@ -481,7 +481,7 @@ export async function POST(req: NextRequest) {
     "Show all relevant workings, formulas, and units clearly."
   ],
   "includeSolutions": true,
-  "requestedFormats": ["docx", "pdf"],
+  "requestedFormats": ["docx"],
   "mcqQuestions": [
     {
       "id": 1,
@@ -489,7 +489,7 @@ export async function POST(req: NextRequest) {
       "options": ["Option A", "Option B", "Option C", "Option D"],
       "correctIndex": 2,
       "marks": 1,
-      "explanation": "Concise solution and reasoning for the marking scheme."
+      "explanation": "Concise solution for the marking scheme."
     }
   ],
   "theoryQuestions": [
@@ -498,13 +498,14 @@ export async function POST(req: NextRequest) {
       "question": "Rigorous theory/essay prompt grounded in document",
       "subQuestions": ["(a) First sub-part [4 Marks]", "(b) Second sub-part [6 Marks]"],
       "marks": 10,
-      "solution": "Complete model solution and marking rubric points."
+      "solution": "Concise model solution and marking rubric points."
     }
   ]
 }
 \`\`\`
+    - Always put ONLY ONE format in \`requestedFormats\`: \`["docx"]\` by default (Word document), or \`["pdf"]\` ONLY when the user explicitly requests PDF.
     - Strictly match the exact counts requested by the user (if user asks for 10 MCQs and 4 theory, generate ALL 10 in \`mcqQuestions\` and ALL 4 in \`theoryQuestions\`; if user asks only for theory, leave \`mcqQuestions: []\`; if user explicitly says no solutions, set \`includeSolutions: false\`).
-    - Quill's UI will automatically render this as a downloadable exam package formatted in **Times New Roman, 12pt font, 1.5 line spacing** for both **Word (.docx)** and **PDF**, with separate downloadable Questions and Solutions files.`;
+    - Quill's UI renders the single requested format (**Word .docx** or **PDF**) formatted in **Times New Roman, 12pt font, 1.5 line spacing**.`;
 
     const systemPrompt = isMultiDoc
       ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
@@ -570,16 +571,50 @@ ${singlePageConstraint}
         message
       );
 
+    // Always default to Word (.docx) ONLY, unless PDF is explicitly requested (one format at a time)
+    const wantsPdfExam =
+      /\bpdf\b/i.test(message) &&
+      !/\b(docx|word\s*(?:doc|document|file))\b/i.test(message);
+    const requestedExamFormat: "docx" | "pdf" = wantsPdfExam ? "pdf" : "docx";
+
+    const requestedMcqMatch = message.match(
+      /(\d+)\s*(?:multiple[- ]choice|mcqs?|objectives?|obj)\b/i
+    );
+    const requestedTheoryMatch = message.match(
+      /(\d+)\s*(?:theory|essay|structured|long[- ]answer)\b/i
+    );
+    const estMcqCount = requestedMcqMatch
+      ? Math.min(30, parseInt(requestedMcqMatch[1], 10))
+      : 10;
+    const estTheoryCount = requestedTheoryMatch
+      ? Math.min(15, parseInt(requestedTheoryMatch[1], 10))
+      : 4;
+    const examMaxTokens = Math.min(
+      isPro ? 3200 : 2600,
+      Math.max(1200, 300 + estMcqCount * 85 + estTheoryCount * 170)
+    );
+
     const examTurnHint = isExamRequest
-      ? `\n\n[EXAM GENERATION INSTRUCTION: The user is manually or formally requesting a downloadable standard examination paper. You MUST respond with a single valid \`\`\`exam JSON fenced block containing "title", "duration", "instructions", "includeSolutions" (true unless the user explicitly asks for no solutions/answers), "requestedFormats": ["docx","pdf"], "mcqQuestions" (for any objective/multiple-choice questions requested), and "theoryQuestions" (for any theory/essay questions requested). If exact counts were omitted by the user, default cleanly to 10 MCQ and 4 Theory questions. Map natural terms like "objective"/"obj" -> mcqQuestions and "theory"/"essay" -> theoryQuestions. Keep all questions strictly grounded in the document context.]`
+      ? `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". Keep question stems, options, and solution notes crisp and concise for fast streaming. Default to 10 MCQ + 4 Theory only if counts were omitted.]`
       : "";
+
+    const promptMessages = isExamRequest
+      ? formattedPrevMessages.slice(-4).map((m) =>
+          m.role === "assistant" && /```(?:exam|quiz|flashcards)/i.test(m.content)
+            ? {
+                ...m,
+                content: "[Previous generated interactive exercise omitted for speed]",
+              }
+            : m
+        )
+      : formattedPrevMessages;
 
     const messages = [
       {
         role: "system" as const,
         content: systemPrompt,
       },
-      ...formattedPrevMessages,
+      ...promptMessages,
       {
         role: "user" as const,
         content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\nUSER QUESTION: ${message}${examTurnHint}`,
@@ -590,9 +625,7 @@ ${singlePageConstraint}
       messages,
       temperature: isPro ? 0.15 : 0.2,
       max_tokens: isExamRequest
-        ? isPro
-          ? 4000
-          : 3200
+        ? examMaxTokens
         : isPracticeRequest
           ? isPro
             ? 2800

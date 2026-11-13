@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { GraduationCap, Send } from "lucide-react";
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { ChatContext } from "./ChatContext";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,18 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
 
   const textarearef = useRef<HTMLTextAreaElement>(null);
   const { isKeyboardVisible } = useMobileViewport();
+
+  useEffect(() => {
+    const handleOpenExamModal = () => {
+      if (!isLoading && !isDisabled) {
+        setIsExamModalOpen(true);
+      }
+    };
+    window.addEventListener("quill:open-exam-modal", handleOpenExamModal);
+    return () => {
+      window.removeEventListener("quill:open-exam-modal", handleOpenExamModal);
+    };
+  }, [isLoading, isDisabled]);
 
   return (
     <div
@@ -68,21 +80,27 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
                     textarearef.current?.focus();
                   }
                 }}
-                placeholder="Ask a question, request exam questions (DOCX/PDF), or any language..."
-                className="w-full min-w-0 resize-none pr-24 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
+                placeholder="Ask a question or request any language..."
+                className="w-full min-w-0 resize-none pr-28 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
               />
-              <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+              <div className="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-1">
                 <Button
                   type="button"
                   variant="outline"
                   disabled={isLoading || isDisabled}
-                  onClick={() => setIsExamModalOpen(true)}
-                  title="Generate Exam Paper (MCQ & Theory in DOCX/PDF)"
-                  aria-label="Generate exam paper"
-                  className="h-8 px-2 text-xs font-semibold text-zinc-700 border-zinc-300 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 flex items-center gap-1"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!isLoading && !isDisabled) {
+                      setIsExamModalOpen(true);
+                    }
+                  }}
+                  title="Open Exam Generator"
+                  aria-label="Open exam generator"
+                  className="h-8 px-2.5 text-xs font-semibold text-zinc-700 bg-white border-zinc-300 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 flex items-center gap-1"
                 >
-                  <GraduationCap className="h-3.5 w-3.5 text-blue-600" />
-                  <span className="hidden sm:inline">Exam</span>
+                  <GraduationCap className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                  <span>Exam</span>
                 </Button>
                 <Button
                   disabled={isLoading || isDisabled}

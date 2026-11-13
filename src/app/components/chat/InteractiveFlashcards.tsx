@@ -1,4 +1,4 @@
-import React, { useContext, useMemo, useState } from "react";
+import React, { useContext, useEffect, useMemo, useState } from "react";
 import {
   evaluateFlashcardAnswer,
   FlashcardEvaluation,
@@ -28,30 +28,111 @@ interface InteractiveFlashcardsProps {
   data: FlashcardsData;
 }
 
+interface PersistedFlashcardsState {
+  currentIndex: number;
+  isCompleted: boolean;
+  typedAnswers: Record<string | number, string>;
+  evaluations: Record<string | number, FlashcardEvaluation>;
+  masteredIds: Array<string | number>;
+  reviewIds: Array<string | number>;
+  aiReviewRequested: boolean;
+}
+
+const flashMemoryStore = new Map<string, PersistedFlashcardsState>();
+
+function buildDeckKey(data: FlashcardsData): string {
+  const sig = `${data.title}|${data.cards.map((c) => c.front).join("|")}`;
+  let hash = 5381;
+  for (let i = 0; i < sig.length; i++) {
+    hash = (hash * 33) ^ sig.charCodeAt(i);
+  }
+  return `quill-fc-${(hash >>> 0).toString(36)}`;
+}
+
+function loadDeckState(key: string): PersistedFlashcardsState | null {
+  const inMem = flashMemoryStore.get(key);
+  if (inMem) return inMem;
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.sessionStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedFlashcardsState;
+        flashMemoryStore.set(key, parsed);
+        return parsed;
+      }
+    } catch {
+      // Ignore storage access errors
+    }
+  }
+  return null;
+}
+
+function saveDeckState(key: string, state: PersistedFlashcardsState) {
+  flashMemoryStore.set(key, state);
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(state));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+}
+
 export const InteractiveFlashcards: React.FC<InteractiveFlashcardsProps> = ({
   data,
 }) => {
   const { submitPrompt, isLoading } = useContext(ChatContext);
+  const storageKey = useMemo(() => buildDeckKey(data), [data]);
+  const initialState = useMemo(() => loadDeckState(storageKey), [storageKey]);
 
   const [reviewFilterIds, setReviewFilterIds] = useState<Set<
     string | number
   > | null>(null);
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [currentIndex, setCurrentIndex] = useState<number>(
+    initialState?.currentIndex ?? 0
+  );
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [showHint, setShowHint] = useState<boolean>(false);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [isCompleted, setIsCompleted] = useState<boolean>(
+    initialState?.isCompleted ?? false
+  );
 
   const [typedAnswers, setTypedAnswers] = useState<
     Record<string | number, string>
-  >({});
+  >(initialState?.typedAnswers ?? {});
   const [evaluations, setEvaluations] = useState<
     Record<string | number, FlashcardEvaluation>
-  >({});
+  >(initialState?.evaluations ?? {});
   const [masteredIds, setMasteredIds] = useState<Set<string | number>>(
-    new Set()
+    () => new Set(initialState?.masteredIds ?? [])
   );
-  const [reviewIds, setReviewIds] = useState<Set<string | number>>(new Set());
-  const [aiReviewRequested, setAiReviewRequested] = useState<boolean>(false);
+  const [reviewIds, setReviewIds] = useState<Set<string | number>>(
+    () => new Set(initialState?.reviewIds ?? [])
+  );
+  const [aiReviewRequested, setAiReviewRequested] = useState<boolean>(
+    initialState?.aiReviewRequested ?? false
+  );
+
+  useEffect(() => {
+    saveDeckState(storageKey, {
+      currentIndex,
+      isCompleted,
+      typedAnswers,
+      evaluations,
+      masteredIds: Array.from(masteredIds),
+      reviewIds: Array.from(reviewIds),
+      aiReviewRequested,
+    });
+  }, [
+    storageKey,
+    currentIndex,
+    isCompleted,
+    typedAnswers,
+    evaluations,
+    masteredIds,
+    reviewIds,
+    aiReviewRequested,
+  ]);
 
   const activeCards: FlashcardItem[] = useMemo(() => {
     if (!reviewFilterIds) return data.cards;

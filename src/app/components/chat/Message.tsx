@@ -13,7 +13,13 @@ import {
   detectStreamingInteractiveFence,
 } from "@/lib/interactive-content";
 import { format } from "date-fns";
-import { Children, forwardRef, isValidElement, useState } from "react";
+import {
+  Children,
+  forwardRef,
+  isValidElement,
+  useMemo,
+  useState,
+} from "react";
 import { Check, Copy, FileText, Loader2 } from "lucide-react";
 import { dispatchPageJump } from "@/lib/page-jump";
 import { copyMessageForWord } from "@/lib/word-clipboard";
@@ -341,6 +347,121 @@ function formatMessageCitations(
   };
 }
 
+function renderInteractiveBlock(lang: string, codeString: string) {
+  if (lang === "quiz" || lang === "quiz-json" || lang === "json:quiz") {
+    const quizData = parseQuizData(codeString);
+    if (quizData) return <InteractiveQuiz data={quizData} />;
+  }
+
+  if (
+    lang === "flashcards" ||
+    lang === "flashcard" ||
+    lang === "cards" ||
+    lang === "flashcards-json" ||
+    lang === "json:flashcards"
+  ) {
+    const flashcardsData = parseFlashcardsData(codeString);
+    if (flashcardsData) {
+      return <InteractiveFlashcards data={flashcardsData} />;
+    }
+  }
+
+  if (
+    lang === "json" ||
+    (!lang &&
+      (codeString.trimStart().startsWith("{") ||
+        codeString.trimStart().startsWith("[")))
+  ) {
+    const quizData = parseQuizData(codeString);
+    if (quizData) return <InteractiveQuiz data={quizData} />;
+    const flashData = parseFlashcardsData(codeString);
+    if (flashData) return <InteractiveFlashcards data={flashData} />;
+  }
+
+  return null;
+}
+
+const MarkdownPre = ({ children, ...props }: any) => {
+  const firstChild = Children.toArray(children)[0];
+  if (isValidElement(firstChild)) {
+    const childProps = firstChild.props as {
+      className?: string;
+      children?: unknown;
+    };
+    const match = /language-([\w:-]+)/.exec(childProps.className || "");
+    const lang = match ? match[1].toLowerCase() : "";
+    const codeString = String(childProps.children || "").replace(/\n$/, "");
+
+    if (renderInteractiveBlock(lang, codeString)) {
+      return <>{children}</>;
+    }
+  }
+  return <pre {...props}>{children}</pre>;
+};
+
+const MarkdownCode = ({ node, inline, className, children, ...props }: any) => {
+  const match = /language-([\w:-]+)/.exec(className || "");
+  const lang = match ? match[1].toLowerCase() : "";
+  const codeString = String(children || "").replace(/\n$/, "");
+
+  if (
+    !inline &&
+    (lang ||
+      (!className &&
+        (codeString.trimStart().startsWith("{") ||
+          codeString.trimStart().startsWith("["))))
+  ) {
+    const interactiveWidget = renderInteractiveBlock(lang, codeString);
+    if (interactiveWidget) {
+      return interactiveWidget;
+    }
+  }
+
+  return (
+    <code className={className} {...props}>
+      {children}
+    </code>
+  );
+};
+
+const MarkdownTable = ({ children, ...props }: any) => (
+  <div className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-zinc-200/90 bg-white shadow-sm">
+    <table
+      className="w-full border-collapse text-left text-xs sm:text-sm font-sans"
+      {...props}
+    >
+      {children}
+    </table>
+  </div>
+);
+
+const MarkdownTh = ({ children, ...props }: any) => (
+  <th
+    className="border-b border-zinc-200 bg-zinc-100/90 px-3 py-2 font-bold text-zinc-900 text-xs sm:text-sm"
+    {...props}
+  >
+    {children}
+  </th>
+);
+
+const MarkdownTd = ({ children, ...props }: any) => (
+  <td
+    className="border-b border-zinc-100 px-3 py-2 text-zinc-800 text-xs sm:text-sm"
+    {...props}
+  >
+    {children}
+  </td>
+);
+
+const MarkdownTr = ({ children, ...props }: any) => (
+  <tr className="hover:bg-zinc-50/70 transition-colors" {...props}>
+    {children}
+  </tr>
+);
+
+const REMARK_PLUGINS = [remarkMath, remarkGfm];
+const REHYPE_PLUGINS = [rehypeKatex];
+
 const Message = forwardRef<HTMLDivElement, MessageProps>(
   (
     { message, isNextMessageSamePerson, isExpanded = false, docSources = [] },
@@ -358,6 +479,167 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
         };
 
     const { formattedText, effectiveSources, citedIndices } = parsed;
+
+    const markdownComponents = useMemo(
+      () => ({
+        pre: MarkdownPre,
+        code: MarkdownCode,
+        table: MarkdownTable,
+        th: MarkdownTh,
+        td: MarkdownTd,
+        tr: MarkdownTr,
+        a: ({ href, children, ...props }: any) => {
+          if (href?.startsWith("#jump-idx-")) {
+            const parts = href.replace("#jump-idx-", "").split("-");
+            const docIdx = parseInt(parts[0], 10);
+            const type = parts[1] || "page";
+            const num = parseInt(parts[2], 10);
+            const source = effectiveSources[docIdx - 1];
+            const validPage = !isNaN(num) && num > 0 ? num : undefined;
+
+            return (
+              <button
+                type="button"
+                data-copy-citation="true"
+                data-copy-brackets="true"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.dispatchEvent(
+                    new CustomEvent("quill:jump-to-doc", {
+                      detail: {
+                        docId: source?.id || undefined,
+                        docName: source?.name || `Document ${docIdx}`,
+                        page: validPage,
+                        type,
+                      },
+                    })
+                  );
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-[11px] font-semibold bg-blue-100/90 hover:bg-blue-200 text-blue-800 border border-blue-300/80 transition-all cursor-pointer not-prose align-baseline active:scale-95"
+                title={
+                  source?.name
+                    ? validPage
+                      ? `${source.name} — ${
+                          type === "slide" ? "Slide" : "Page"
+                        } ${validPage}`
+                      : `Switch to ${source.name}`
+                    : undefined
+                }
+              >
+                <span>{children}</span>
+              </button>
+            );
+          }
+
+          if (href?.startsWith("#jump-doc-")) {
+            const rest = href.replace("#jump-doc-", "");
+            const lastHyphen = rest.lastIndexOf("-");
+            const secondLastHyphen = rest.lastIndexOf("-", lastHyphen - 1);
+            const encodedDoc = rest.slice(0, secondLastHyphen);
+            const docName = decodeURIComponent(encodedDoc);
+            const type = rest.slice(secondLastHyphen + 1, lastHyphen);
+            const num = parseInt(rest.slice(lastHyphen + 1), 10);
+
+            return (
+              <button
+                type="button"
+                data-copy-citation="true"
+                data-copy-brackets="true"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.dispatchEvent(
+                    new CustomEvent("quill:jump-to-doc", {
+                      detail: {
+                        docName,
+                        page: isNaN(num) ? undefined : num,
+                        type,
+                      },
+                    })
+                  );
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-sm active:scale-95 max-w-full min-w-0"
+                title={`Switch to ${docName} - ${type} ${num}`}
+              >
+                <FileText
+                  aria-hidden="true"
+                  data-copy-ignore="true"
+                  className="h-3 w-3 text-blue-600 shrink-0"
+                />
+                <span className="truncate">{children}</span>
+              </button>
+            );
+          }
+
+          if (href?.startsWith("#jump-")) {
+            const parts = href.replace("#jump-", "").split("-");
+            const type = parts[0];
+            const num = parseInt(parts[1], 10);
+            return (
+              <button
+                type="button"
+                data-copy-citation="true"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (!isNaN(num) && num > 0) {
+                    if (effectiveSources.length > 1 && type === "slide") {
+                      const pptxSources = effectiveSources.filter((s) =>
+                        /\.(pptx?|PPTX?)$/i.test(s.name || "")
+                      );
+                      if (pptxSources.length === 1) {
+                        window.dispatchEvent(
+                          new CustomEvent("quill:jump-to-doc", {
+                            detail: {
+                              docId: pptxSources[0].id || undefined,
+                              docName: pptxSources[0].name,
+                              page: num,
+                              type,
+                            },
+                          })
+                        );
+                        return;
+                      }
+                    }
+                    const singleTargetId =
+                      effectiveSources.length === 1 && effectiveSources[0]?.id
+                        ? effectiveSources[0].id
+                        : undefined;
+                    dispatchPageJump({
+                      fileId: singleTargetId,
+                      page: num,
+                      type,
+                    });
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-sm active:scale-95"
+                title={`Jump to ${type} ${num}`}
+              >
+                <FileText
+                  aria-hidden="true"
+                  data-copy-ignore="true"
+                  className="h-3 w-3 text-blue-600 shrink-0"
+                />
+                <span>{children}</span>
+              </button>
+            );
+          }
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 underline hover:text-blue-800"
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        },
+      }),
+      [effectiveSources]
+    );
 
     const handleCopy = async () => {
       if (typeof message.text === "string") {
@@ -458,47 +740,6 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                 ? streamingFence.prefixText
                 : formattedText;
 
-              const renderInteractiveBlock = (
-                lang: string,
-                codeString: string
-              ) => {
-                if (
-                  lang === "quiz" ||
-                  lang === "quiz-json" ||
-                  lang === "json:quiz"
-                ) {
-                  const quizData = parseQuizData(codeString);
-                  if (quizData) return <InteractiveQuiz data={quizData} />;
-                }
-
-                if (
-                  lang === "flashcards" ||
-                  lang === "flashcard" ||
-                  lang === "cards" ||
-                  lang === "flashcards-json" ||
-                  lang === "json:flashcards"
-                ) {
-                  const flashcardsData = parseFlashcardsData(codeString);
-                  if (flashcardsData) {
-                    return <InteractiveFlashcards data={flashcardsData} />;
-                  }
-                }
-
-                if (
-                  lang === "json" ||
-                  (!lang &&
-                    (codeString.trimStart().startsWith("{") ||
-                      codeString.trimStart().startsWith("[")))
-                ) {
-                  const quizData = parseQuizData(codeString);
-                  if (quizData) return <InteractiveQuiz data={quizData} />;
-                  const flashData = parseFlashcardsData(codeString);
-                  if (flashData) return <InteractiveFlashcards data={flashData} />;
-                }
-
-                return null;
-              };
-
               return (
                 <>
                   {markdownSource ? (
@@ -509,238 +750,12 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                           "text-zinc-50 prose-invert": message.isUserMessage,
                         }
                       )}
-                      remarkPlugins={[remarkMath, remarkGfm]}
-                      rehypePlugins={[rehypeKatex]}
-                      components={{
-                        pre: ({ children, ...props }) => {
-                          const firstChild = Children.toArray(children)[0];
-                          if (isValidElement(firstChild)) {
-                            const childProps = firstChild.props as {
-                              className?: string;
-                              children?: unknown;
-                            };
-                            const match = /language-([\w:-]+)/.exec(
-                              childProps.className || ""
-                            );
-                            const lang = match ? match[1].toLowerCase() : "";
-                            const codeString = String(
-                              childProps.children || ""
-                            ).replace(/\n$/, "");
-
-                            if (renderInteractiveBlock(lang, codeString)) {
-                              return <>{children}</>;
-                            }
-                          }
-                          return <pre {...props}>{children}</pre>;
-                        },
-                        code: ({ node, inline, className, children, ...props }: any) => {
-                          const match = /language-([\w:-]+)/.exec(className || "");
-                          const lang = match ? match[1].toLowerCase() : "";
-                          const codeString = String(children || "").replace(/\n$/, "");
-
-                          if (
-                            !inline &&
-                            (lang ||
-                              (!className &&
-                                (codeString.trimStart().startsWith("{") ||
-                                  codeString.trimStart().startsWith("["))))
-                          ) {
-                            const interactiveWidget = renderInteractiveBlock(
-                              lang,
-                              codeString
-                            );
-                            if (interactiveWidget) {
-                              return interactiveWidget;
-                            }
-                          }
-
-                          return (
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          );
-                        },
-                        table: ({ children, ...props }) => (
-                          <div className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-zinc-200/90 bg-white shadow-sm">
-                            <table className="w-full border-collapse text-left text-xs sm:text-sm font-sans" {...props}>
-                              {children}
-                            </table>
-                          </div>
-                        ),
-                      th: ({ children, ...props }) => (
-                        <th className="border-b border-zinc-200 bg-zinc-100/90 px-3 py-2 font-bold text-zinc-900 text-xs sm:text-sm" {...props}>
-                          {children}
-                        </th>
-                      ),
-                      td: ({ children, ...props }) => (
-                        <td className="border-b border-zinc-100 px-3 py-2 text-zinc-800 text-xs sm:text-sm" {...props}>
-                          {children}
-                        </td>
-                      ),
-                      tr: ({ children, ...props }) => (
-                        <tr className="hover:bg-zinc-50/70 transition-colors" {...props}>
-                          {children}
-                        </tr>
-                      ),
-                      a: ({ href, children, ...props }) => {
-                    if (href?.startsWith("#jump-idx-")) {
-                      const parts = href.replace("#jump-idx-", "").split("-");
-                      const docIdx = parseInt(parts[0], 10);
-                      const type = parts[1] || "page";
-                      const num = parseInt(parts[2], 10);
-                      const source = effectiveSources[docIdx - 1];
-                      const validPage = !isNaN(num) && num > 0 ? num : undefined;
-
-                      return (
-                        <button
-                          type="button"
-                          data-copy-citation="true"
-                          data-copy-brackets="true"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            window.dispatchEvent(
-                              new CustomEvent("quill:jump-to-doc", {
-                                detail: {
-                                  docId: source?.id || undefined,
-                                  docName:
-                                    source?.name || `Document ${docIdx}`,
-                                  page: validPage,
-                                  type,
-                                },
-                              })
-                            );
-                          }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-[11px] font-semibold bg-blue-100/90 hover:bg-blue-200 text-blue-800 border border-blue-300/80 transition-all cursor-pointer not-prose align-baseline active:scale-95"
-                          title={
-                            source?.name
-                              ? validPage
-                                ? `${source.name} — ${type === "slide" ? "Slide" : "Page"
-                                } ${validPage}`
-                                : `Switch to ${source.name}`
-                              : undefined
-                          }
-                        >
-                          <span>{children}</span>
-                        </button>
-                      );
-                    }
-
-                    if (href?.startsWith("#jump-doc-")) {
-                      const rest = href.replace("#jump-doc-", "");
-                      const lastHyphen = rest.lastIndexOf("-");
-                      const secondLastHyphen = rest.lastIndexOf(
-                        "-",
-                        lastHyphen - 1
-                      );
-                      const encodedDoc = rest.slice(0, secondLastHyphen);
-                      const docName = decodeURIComponent(encodedDoc);
-                      const type = rest.slice(
-                        secondLastHyphen + 1,
-                        lastHyphen
-                      );
-                      const num = parseInt(rest.slice(lastHyphen + 1), 10);
-
-                      return (
-                        <button
-                          type="button"
-                          data-copy-citation="true"
-                          data-copy-brackets="true"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            window.dispatchEvent(
-                              new CustomEvent("quill:jump-to-doc", {
-                                detail: {
-                                  docName,
-                                  page: isNaN(num) ? undefined : num,
-                                  type,
-                                },
-                              })
-                            );
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95 max-w-full min-w-0"
-                          title={`Switch to ${docName} - ${type} ${num}`}
-                        >
-                          <FileText
-                            aria-hidden="true"
-                            data-copy-ignore="true"
-                            className="h-3 w-3 text-blue-600 shrink-0"
-                          />
-                          <span className="truncate">{children}</span>
-                        </button>
-                      );
-                    }
-
-                    if (href?.startsWith("#jump-")) {
-                      const parts = href.replace("#jump-", "").split("-");
-                      const type = parts[0];
-                      const num = parseInt(parts[1], 10);
-                      return (
-                        <button
-                          type="button"
-                          data-copy-citation="true"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (!isNaN(num) && num > 0) {
-                              if (effectiveSources.length > 1 && type === "slide") {
-                                const pptxSources = effectiveSources.filter((s) =>
-                                  /\.(pptx?|PPTX?)$/i.test(s.name || "")
-                                );
-                                if (pptxSources.length === 1) {
-                                  window.dispatchEvent(
-                                    new CustomEvent("quill:jump-to-doc", {
-                                      detail: {
-                                        docId: pptxSources[0].id || undefined,
-                                        docName: pptxSources[0].name,
-                                        page: num,
-                                        type,
-                                      },
-                                    })
-                                  );
-                                  return;
-                                }
-                              }
-                              const singleTargetId =
-                                effectiveSources.length === 1 && effectiveSources[0]?.id
-                                  ? effectiveSources[0].id
-                                  : undefined;
-                              dispatchPageJump({
-                                fileId: singleTargetId,
-                                page: num,
-                                type,
-                              });
-                            }
-                          }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-semibold bg-blue-100 hover:bg-blue-200 text-blue-800 border border-blue-300 transition-all cursor-pointer not-prose align-baseline shadow-xs active:scale-95"
-                          title={`Jump to ${type} ${num}`}
-                        >
-                          <FileText
-                            aria-hidden="true"
-                            data-copy-ignore="true"
-                            className="h-3 w-3 text-blue-600 shrink-0"
-                          />
-                          <span>{children}</span>
-                        </button>
-                      );
-                    }
-                    return (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 underline hover:text-blue-800"
-                        {...props}
-                      >
-                        {children}
-                      </a>
-                    );
-                  },
-                }}
-              >
-                {markdownSource}
-              </ReactMarkdown>
+                      remarkPlugins={REMARK_PLUGINS}
+                      rehypePlugins={REHYPE_PLUGINS}
+                      components={markdownComponents}
+                    >
+                      {markdownSource}
+                    </ReactMarkdown>
                   ) : null}
                   {streamingFence.type ? (
                     <div className="not-prose my-2.5 flex items-center gap-3 rounded-xl border border-blue-200/80 bg-blue-50/70 px-4 py-3.5 text-sm font-sans text-zinc-700 shadow-sm">

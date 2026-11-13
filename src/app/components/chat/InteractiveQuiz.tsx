@@ -1,4 +1,4 @@
-import React, { useContext, useState } from "react";
+import React, { useContext, useEffect, useMemo, useState } from "react";
 import { QuizData } from "@/lib/interactive-content";
 import MathMarkdown from "./MathMarkdown";
 import { ChatContext } from "./ChatContext";
@@ -20,14 +20,97 @@ interface InteractiveQuizProps {
   data: QuizData;
 }
 
+interface PersistedQuizState {
+  selectedAnswers: Record<number, number>;
+  isSubmitted: boolean;
+  showAllExplanations: boolean;
+  aiReviewRequested: boolean;
+}
+
+const quizMemoryStore = new Map<string, PersistedQuizState>();
+
+function buildQuizKey(data: QuizData): string {
+  const sig = `${data.title}|${data.questions
+    .map((q) => `${q.question}:${q.options.length}`)
+    .join("|")}`;
+  let hash = 5381;
+  for (let i = 0; i < sig.length; i++) {
+    hash = (hash * 33) ^ sig.charCodeAt(i);
+  }
+  return `quill-quiz-${(hash >>> 0).toString(36)}`;
+}
+
+function loadQuizState(key: string): PersistedQuizState | null {
+  const inMem = quizMemoryStore.get(key);
+  if (inMem) return inMem;
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.sessionStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedQuizState;
+        quizMemoryStore.set(key, parsed);
+        return parsed;
+      }
+    } catch {
+      // Ignore storage restrictions
+    }
+  }
+  return null;
+}
+
+function saveQuizState(key: string, state: PersistedQuizState) {
+  quizMemoryStore.set(key, state);
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(state));
+    } catch {
+      // Ignore storage quota / privacy errors
+    }
+  }
+}
+
 export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
   const { submitPrompt, isLoading } = useContext(ChatContext);
+  const storageKey = useMemo(() => buildQuizKey(data), [data]);
+
+  const initialState = useMemo(
+    () =>
+      loadQuizState(storageKey) ?? {
+        selectedAnswers: {},
+        isSubmitted: false,
+        showAllExplanations: true,
+        aiReviewRequested: false,
+      },
+    [storageKey]
+  );
+
   const [selectedAnswers, setSelectedAnswers] = useState<
     Record<number, number>
-  >({});
-  const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
-  const [showAllExplanations, setShowAllExplanations] = useState<boolean>(true);
-  const [aiReviewRequested, setAiReviewRequested] = useState<boolean>(false);
+  >(initialState.selectedAnswers);
+  const [isSubmitted, setIsSubmitted] = useState<boolean>(
+    initialState.isSubmitted
+  );
+  const [showAllExplanations, setShowAllExplanations] = useState<boolean>(
+    initialState.showAllExplanations
+  );
+  const [aiReviewRequested, setAiReviewRequested] = useState<boolean>(
+    initialState.aiReviewRequested
+  );
+
+  useEffect(() => {
+    saveQuizState(storageKey, {
+      selectedAnswers,
+      isSubmitted,
+      showAllExplanations,
+      aiReviewRequested,
+    });
+  }, [
+    storageKey,
+    selectedAnswers,
+    isSubmitted,
+    showAllExplanations,
+    aiReviewRequested,
+  ]);
 
   const hasAnswerKey = data.hasAnswerKey !== false;
   const totalQuestions = data.questions.length;
@@ -275,6 +358,11 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                   <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-zinc-100 text-zinc-700 border border-zinc-200">
                     Question {qIdx + 1}
                   </span>
+                  {!isSubmitted && isAnswered && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200">
+                      Option {optionLetters[userSelectedIdx] || userSelectedIdx + 1} picked
+                    </span>
+                  )}
                   {isSubmitted && hasCorrect && (
                     <span
                       className={cn(
@@ -312,7 +400,11 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
               </div>
 
               {/* Options Stack */}
-              <div role="radiogroup" aria-label={`Options for Question ${qIdx + 1}`} className="space-y-2.5">
+              <div
+                role="radiogroup"
+                aria-label={`Options for Question ${qIdx + 1}`}
+                className="space-y-2.5"
+              >
                 {q.options.map((optionText, optIdx) => {
                   const isSelected = userSelectedIdx === optIdx;
                   const isThisOptionCorrect =
@@ -329,6 +421,7 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                       type="button"
                       role="radio"
                       aria-checked={isSelected}
+                      data-selected={isSelected ? "true" : "false"}
                       disabled={isSubmitted}
                       onClick={(e) => {
                         e.preventDefault();
@@ -336,34 +429,34 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                         handleSelectOption(qIdx, optIdx);
                       }}
                       className={cn(
-                        "w-full text-left flex items-start gap-3 p-3 sm:p-3.5 rounded-xl border transition-all duration-150 relative",
+                        "w-full text-left flex items-start gap-3 p-3 sm:p-3.5 rounded-xl border-2 transition-all duration-150 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1",
                         !isSubmitted
                           ? isSelected
-                            ? "border-blue-600 bg-blue-50 text-blue-950 ring-1 ring-blue-600 shadow-sm cursor-pointer"
-                            : "border-zinc-200 bg-white hover:bg-zinc-50 hover:border-blue-300 text-zinc-800 cursor-pointer"
+                            ? "border-blue-600 bg-blue-100 text-blue-950 shadow-sm cursor-pointer font-medium"
+                            : "border-zinc-200 bg-white hover:bg-blue-50/40 hover:border-blue-400 text-zinc-800 cursor-pointer active:scale-[0.99]"
                           : !hasCorrect
                             ? isSelected
-                              ? "border-blue-600 bg-blue-50 text-blue-950 ring-1 ring-blue-600"
+                              ? "border-blue-600 bg-blue-100 text-blue-950 font-medium"
                               : "border-zinc-200 bg-zinc-50/50 text-zinc-600"
                             : isThisOptionCorrect
-                              ? "border-emerald-500 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-500 font-medium"
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-950 font-medium"
                               : isThisOptionUserWrong
-                                ? "border-rose-400 bg-rose-50 text-rose-950 ring-1 ring-rose-400"
-                                : "border-zinc-200 bg-zinc-50/50 text-zinc-500 opacity-80"
+                                ? "border-rose-500 bg-rose-50 text-rose-950"
+                                : "border-zinc-200 bg-zinc-50/60 text-zinc-500 opacity-80"
                       )}
                     >
                       <span
                         className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md text-xs sm:text-sm font-bold shrink-0 transition-colors mt-0.5",
+                          "flex h-7 w-7 items-center justify-center rounded-md text-xs sm:text-sm font-bold shrink-0 transition-colors mt-0.5 border",
                           !isSubmitted || !hasCorrect
                             ? isSelected
-                              ? "bg-blue-600 text-white"
-                              : "bg-zinc-100 text-zinc-700 border border-zinc-300"
+                              ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                              : "bg-zinc-100 text-zinc-700 border-zinc-300"
                             : isThisOptionCorrect
-                              ? "bg-emerald-600 text-white"
+                              ? "bg-emerald-600 text-white border-emerald-600"
                               : isThisOptionUserWrong
-                                ? "bg-rose-600 text-white"
-                                : "bg-zinc-100 text-zinc-400"
+                                ? "bg-rose-600 text-white border-rose-600"
+                                : "bg-zinc-100 text-zinc-400 border-zinc-200"
                         )}
                       >
                         {optionLetters[optIdx] || optIdx + 1}
@@ -376,6 +469,13 @@ export const InteractiveQuiz: React.FC<InteractiveQuizProps> = ({ data }) => {
                           className="font-normal text-inherit [&_p]:my-0"
                         />
                       </div>
+
+                      {!isSubmitted && isSelected && (
+                        <span className="shrink-0 inline-flex items-center gap-1 self-center rounded-full bg-blue-600 px-2.5 py-0.5 text-xs font-bold text-white shadow-sm">
+                          <Check className="h-3.5 w-3.5" />
+                          <span>Selected</span>
+                        </span>
+                      )}
 
                       {isSubmitted && hasCorrect && (
                         <div className="shrink-0 flex items-center gap-1 self-center">

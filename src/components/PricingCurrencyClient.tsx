@@ -10,22 +10,34 @@ import {
 
 interface PricingCurrencyProps {
   initialCurrency: BillingCurrency;
+  initialCountryCode?: string | null;
   initialSource: CurrencyResolutionSource;
 }
 
 export function PricingCurrencyBar({
   initialCurrency,
+  initialCountryCode,
   initialSource,
 }: PricingCurrencyProps) {
-  const { currency, setCurrency } = useVisitorCurrency({
+  const { currency, countryCode, source, setCurrency } = useVisitorCurrency({
     initialCurrency,
+    initialCountryCode,
     initialSource,
-    skipQuery: true,
   });
 
+  const locationHint =
+    currency === "NGN"
+      ? countryCode === "NG" && source !== "cookie"
+        ? "Nigeria detected — prices shown in Naira (₦)"
+        : "Prices shown in Naira (₦ NGN)"
+      : countryCode && countryCode !== "NG" && source !== "cookie"
+        ? "International region detected — prices shown in USD ($)"
+        : "Prices shown in USD ($)";
+
   return (
-    <div className="mt-6 flex justify-center">
+    <div className="mt-6 flex flex-col items-center gap-2">
       <CurrencyToggle currency={currency} onChange={setCurrency} />
+      <p className="text-xs text-zinc-500">{locationHint}</p>
     </div>
   );
 }
@@ -41,12 +53,13 @@ export function PlanPriceDisplay({
   priceUsd,
   priceNgn,
   initialCurrency,
+  initialCountryCode,
   initialSource,
 }: PlanPriceDisplayProps) {
   const { currency } = useVisitorCurrency({
     initialCurrency,
+    initialCountryCode,
     initialSource,
-    skipQuery: true,
   });
 
   const primaryLabel = isFree
@@ -66,4 +79,3 @@ export function PlanPriceDisplay({
     </div>
   );
 }
-

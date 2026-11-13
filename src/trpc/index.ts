@@ -27,7 +27,7 @@ import {
   PAYSTACK_PRO_AMOUNT_KOBO,
   PAYSTACK_PRO_AMOUNT_USD_CENTS,
 } from "@/lib/paystack";
-import { getServerGeoCurrency } from "@/lib/geo-currency";
+import { resolveServerGeoCurrency } from "@/lib/geo-currency";
 import { pinecone, isPineconeConfigured } from "@/lib/pinecone";
 import { isAiConfigured } from "@/lib/ai";
 import { deleteDocumentBuffer } from "@/lib/document-storage";
@@ -111,8 +111,8 @@ export const appRouter = router({
     });
   }),
 
-  getVisitorRegion: publicProcedure.query(() => {
-    return getServerGeoCurrency();
+  getVisitorRegion: publicProcedure.query(async () => {
+    return resolveServerGeoCurrency();
   }),
 
   createPaystackSession: privateProcedure
@@ -164,7 +164,7 @@ export const appRouter = router({
         return { url: `${billingUrl}?status=active` };
       }
 
-      const serverGeo = getServerGeoCurrency();
+      const serverGeo = await resolveServerGeoCurrency();
       const targetCurrency = input?.currency ?? serverGeo.currency;
       const usdPrice = targetPaidPlan?.price.amount ?? 0;
       const ngnPrice = targetPaidPlan?.price.amountNgn ?? 0;

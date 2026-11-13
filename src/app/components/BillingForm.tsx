@@ -46,6 +46,7 @@ interface BillingFormProps {
   plans?: DynamicPlan[];
   billingGateway?: "paystack" | "none";
   initialCurrency?: BillingCurrency;
+  initialCountryCode?: string | null;
   initialSource?: CurrencyResolutionSource;
 }
 
@@ -54,6 +55,7 @@ const BillingForm = ({
   plans = [],
   billingGateway = "paystack",
   initialCurrency,
+  initialCountryCode,
   initialSource,
 }: BillingFormProps) => {
   const { toast } = useToast();
@@ -61,8 +63,8 @@ const BillingForm = ({
   const router = useRouter();
   const { currency, setCurrency } = useVisitorCurrency({
     initialCurrency,
+    initialCountryCode,
     initialSource,
-    skipQuery: Boolean(initialCurrency),
   });
   const [isVerifying, setIsVerifying] = useState(false);
   const [isManageOpen, setIsManageOpen] = useState(false);
@@ -306,7 +308,7 @@ const BillingForm = ({
                     <span className="text-xs text-zinc-500 font-medium">
                       {currency === "USD"
                         ? "/ month (billed in USD)"
-                        : `/ month (~ ${formatCurrencyAmount(displayPriceUsd, "USD")} USD)`}
+                        : "/ month (billed in Naira)"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">

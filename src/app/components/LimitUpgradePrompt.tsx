@@ -193,7 +193,7 @@ export default function LimitUpgradePrompt({
                 </span>{" "}
                 ({currency === "USD"
                   ? `${formatCurrencyAmount(priceUsd, "USD")} USD/mo`
-                  : `~${formatCurrencyAmount(priceUsd, "USD")} USD/mo`}).
+                  : `${formattedPrimaryPrice} NGN/mo`}).
               </p>
             </div>
           </div>
@@ -275,9 +275,7 @@ export default function LimitUpgradePrompt({
                 <span className="text-xs font-medium text-zinc-500">/mo</span>
               </div>
               <div className="text-[11px] text-zinc-500">
-                {currency === "USD"
-                  ? "Billed in USD"
-                  : `~ ${formatCurrencyAmount(priceUsd, "USD")} USD/mo`}
+                {currency === "USD" ? "Billed in USD" : "Billed in Naira (NGN)"}
               </div>
             </div>
           </div>

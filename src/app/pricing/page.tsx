@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getKindeServerSession, RegisterLink } from "@/lib/kinde";
 import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
-import { getServerGeoCurrency } from "@/lib/geo-currency";
+import { resolveServerGeoCurrency } from "@/lib/geo-currency";
 import {
   PricingCurrencyBar,
   PlanPriceDisplay,
@@ -30,7 +30,7 @@ async function Page() {
     getUserSubscriptionPlan(),
     getDynamicPlans(),
   ]);
-  const geo = getServerGeoCurrency();
+  const geo = await resolveServerGeoCurrency();
 
   return (
     <>
@@ -43,6 +43,7 @@ async function Page() {
           </p>
           <PricingCurrencyBar
             initialCurrency={geo.currency}
+            initialCountryCode={geo.countryCode}
             initialSource={geo.source}
           />
         </div>
@@ -97,6 +98,7 @@ async function Page() {
                         priceUsd={price}
                         priceNgn={planItem.price?.amountNgn ?? 18000}
                         initialCurrency={geo.currency}
+                        initialCountryCode={geo.countryCode}
                         initialSource={geo.source}
                       />
                     </div>
@@ -179,6 +181,7 @@ async function Page() {
                             planSlug={planItem.slug}
                             planName={planItem.name}
                             initialCurrency={geo.currency}
+                            initialCountryCode={geo.countryCode}
                             initialSource={geo.source}
                           />
                         )

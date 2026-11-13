@@ -17,10 +17,111 @@ export function normalizeCurrency(value?: string | null): BillingCurrency | null
   return null;
 }
 
+export const COUNTRY_HEADER_NAMES = [
+  "x-vercel-ip-country",
+  "cf-ipcountry",
+  "cloudfront-viewer-country",
+  "fly-client-country",
+  "x-nf-country",
+  "x-country-code",
+  "x-country",
+  "x-geo-country",
+  "x-client-country",
+  "x-geoip-country",
+  "x-appengine-country",
+] as const;
+
 export function isValidCountryCode(code?: string | null): boolean {
   if (!code) return false;
   const upper = code.trim().toUpperCase();
   return /^[A-Z]{2}$/.test(upper) && upper !== "XX" && upper !== "T1" && upper !== "ZZ";
+}
+
+function cleanIpCandidate(raw?: string | null): string | null {
+  if (!raw) return null;
+  let ip = raw.trim().replace(/^["']|["']$/g, "");
+  if (!ip || ip.toLowerCase() === "unknown") return null;
+
+  // Handle bracketed IPv6 like [2001:db8::1]:1234
+  const bracketed = ip.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketed) {
+    ip = bracketed[1];
+  } else if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) {
+    // Strip port from IPv4:port
+    ip = ip.replace(/:\d+$/, "");
+  }
+
+  if (ip.toLowerCase().startsWith("::ffff:")) {
+    ip = ip.slice(7);
+  }
+  return ip.trim() || null;
+}
+
+export function isPublicIp(rawIp?: string | null): boolean {
+  const ip = cleanIpCandidate(rawIp);
+  if (!ip) return false;
+
+  // IPv4 validation + private/reserved range exclusion
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) {
+    const octets = ip.split(".").map(Number);
+    if (octets.some((n) => isNaN(n) || n < 0 || n > 255)) return false;
+    const [a, b] = octets;
+    if (a === 0 || a === 10 || a === 127) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
+    if (a === 169 && b === 254) return false; // link-local
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a >= 224) return false;
+    return true;
+  }
+
+  // Basic IPv6 validation + loopback/ULA/link-local exclusion
+  if (ip.includes(":")) {
+    const lower = ip.toLowerCase();
+    if (lower === "::" || lower === "::1") return false;
+    if (/^(?:fc|fd|fe8|fe9|fea|feb)/i.test(lower)) return false;
+    return /^[0-9a-f:]+$/i.test(lower);
+  }
+
+  return false;
+}
+
+export function extractClientIpFromHeaders(
+  getHeader: (name: string) => string | null | undefined
+): string | null {
+  const singleHeaders = [
+    "cf-connecting-ip",
+    "true-client-ip",
+    "x-real-ip",
+    "x-client-ip",
+    "fastly-client-ip",
+  ];
+  for (const name of singleHeaders) {
+    const cleaned = cleanIpCandidate(getHeader(name));
+    if (cleaned && isPublicIp(cleaned)) return cleaned;
+  }
+
+  const forwardedListHeaders = ["x-vercel-forwarded-for", "x-forwarded-for"];
+  for (const name of forwardedListHeaders) {
+    const raw = getHeader(name);
+    if (!raw) continue;
+    for (const part of raw.split(",")) {
+      const cleaned = cleanIpCandidate(part);
+      if (cleaned && isPublicIp(cleaned)) return cleaned;
+    }
+  }
+
+  const forwarded = getHeader("forwarded");
+  if (forwarded) {
+    const forwardedPattern = /for=([^;,\s]+)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = forwardedPattern.exec(forwarded)) !== null) {
+      const cleaned = cleanIpCandidate(m[1]);
+      if (cleaned && isPublicIp(cleaned)) return cleaned;
+    }
+  }
+
+  return null;
 }
 
 export function resolveCurrencyFromCountry(

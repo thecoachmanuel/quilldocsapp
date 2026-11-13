@@ -1,18 +1,18 @@
 import BillingForm from "@/app/components/BillingForm";
 import { isPaystackConfigured } from "@/lib/paystack";
 import { getUserSubscriptionPlan, getDynamicPlans } from "@/lib/subscription";
-import { getServerGeoCurrency } from "@/lib/geo-currency";
+import { resolveServerGeoCurrency } from "@/lib/geo-currency";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 async function Page() {
-  const [subscriptionPlan, plans] = await Promise.all([
+  const [subscriptionPlan, plans, geo] = await Promise.all([
     getUserSubscriptionPlan(),
     getDynamicPlans(),
+    resolveServerGeoCurrency(),
   ]);
   const billingGateway = isPaystackConfigured() ? "paystack" : "none";
-  const geo = getServerGeoCurrency();
 
   return (
     <BillingForm
@@ -20,6 +20,7 @@ async function Page() {
       plans={plans}
       billingGateway={billingGateway}
       initialCurrency={geo.currency}
+      initialCountryCode={geo.countryCode}
       initialSource={geo.source}
     />
   );

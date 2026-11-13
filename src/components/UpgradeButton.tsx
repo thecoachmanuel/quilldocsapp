@@ -11,18 +11,20 @@ function UpgradeButton({
   planSlug,
   planName,
   initialCurrency,
+  initialCountryCode,
   initialSource,
 }: {
   planSlug?: string;
   planName?: string;
   initialCurrency?: BillingCurrency;
+  initialCountryCode?: string | null;
   initialSource?: CurrencyResolutionSource;
 } = {}) {
   const { toast } = useToast();
   const { currency } = useVisitorCurrency({
     initialCurrency,
+    initialCountryCode,
     initialSource,
-    skipQuery: Boolean(initialCurrency),
   });
 
   const { mutate: createPaystackSession, isLoading } =

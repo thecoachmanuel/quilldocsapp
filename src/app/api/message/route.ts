@@ -592,7 +592,7 @@ ${singlePageConstraint}
 - Other Documents Awareness: If the user asks about an unloaded library document listed above, mention it by exact name and let them know they can reference it directly or tap "Add Docs" for Multi-Doc Chat.`;
 
     const isExamRequest =
-      /\b(exam|examination|theory|essay|objective|obj|past questions?|test paper|mock\s+(?:exam|test)|midterm|marking scheme|marking guide|times new roman|section\s+a\b.*section\s+b)\b/i.test(
+      /\b(exam|examination|theory|essay|subjective|objective|obj|past questions?|test paper|mock\s+(?:exam|test)|midterm|marking scheme|marking guide|times new roman|section\s+a\b.*section\s+b|written\s+questions?|long[- ]answer)\b/i.test(
         message
       ) ||
       (/\b(questions?|quiz|test)\b/i.test(message) &&
@@ -704,6 +704,7 @@ ${singlePageConstraint}
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
+      preferGemini: isExamRequest,
       max_tokens:
         isExamRequest || isPracticeRequest
           ? dynamicPracticeMaxTokens
@@ -723,8 +724,12 @@ ${singlePageConstraint}
           .join(" | ")}`
       : "";
 
-    // When explicit question/card counts were requested, verify exact count & auto-fill missing items
-    if (requestedCounts?.hasExplicitCount) {
+    const shouldVerifyExamOrCount =
+      Boolean(requestedCounts?.hasExplicitCount) ||
+      (isExamRequest && requestedCounts?.kind === "exam");
+
+    // When explicit counts or exam sections are requested, verify both MCQ/Theory & exact counts
+    if (shouldVerifyExamOrCount && requestedCounts) {
       const encoder = new TextEncoder();
       const verifiedStream = new ReadableStream({
         async start(controller) {
@@ -782,6 +787,7 @@ ${singlePageConstraint}
               const retryCompletion = await createCompletionWithFallback({
                 messages,
                 temperature: isPro ? 0.15 : 0.2,
+                preferGemini: isExamRequest,
                 max_tokens:
                   isExamRequest || isPracticeRequest
                     ? dynamicPracticeMaxTokens
@@ -815,10 +821,10 @@ ${singlePageConstraint}
                 );
                 let extraExam: ReturnType<typeof parseExamData> = null;
                 const needTheoryFill =
-                  (requestedCounts.theoryCount ?? 0) > 0 && missingTheory > 0;
+                  Boolean(requestedCounts.wantsTheory || (requestedCounts.theoryCount ?? 0) > 0) &&
+                  missingTheory > 0;
                 const needMcqFill =
-                  (requestedCounts.mcqCount ?? 0) > 0 &&
-                  examData.mcqQuestions.length === 0 &&
+                  Boolean(requestedCounts.wantsMcq || (requestedCounts.mcqCount ?? 0) > 0) &&
                   missingMcq > 0;
 
                 if (needTheoryFill || needMcqFill) {
@@ -843,10 +849,11 @@ ${singlePageConstraint}
                         },
                       ],
                       temperature: 0.15,
+                      preferGemini: isExamRequest,
                       max_tokens: Math.min(
-                        1800,
+                        2400,
                         400 +
-                          (needMcqFill ? missingMcq * 130 : 0) +
+                          (needMcqFill ? missingMcq * 135 : 0) +
                           (needTheoryFill ? missingTheory * 260 : 0)
                       ),
                     });

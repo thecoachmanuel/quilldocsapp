@@ -925,15 +925,48 @@ export async function createCompletionWithFallback({
   messages,
   temperature = 0.2,
   max_tokens = 1800,
+  preferGemini = false,
 }: {
   messages: ChatMessageParam[];
   temperature?: number;
   max_tokens?: number;
+  preferGemini?: boolean;
 }) {
   let lastError: any = null;
   const openRouterKeys = getOpenRouterKeys();
   const geminiKeys = getGeminiKeys();
   const openAiKeys = getOpenAiKeys();
+
+  const tryGeminiPool = async () => {
+    if (geminiKeys.length === 0) return null;
+    const geminiRes = await runProviderModelFallback({
+      provider: "gemini",
+      providerLabel: "Gemini free",
+      keys: geminiKeys,
+      models: GEMINI_FREE_MODELS,
+      messages,
+      temperature,
+      maxTokens: Math.min(8192, Math.max(max_tokens * 2, 4096)),
+      compactContextChars: 36000,
+      compactHistoryTurns: 8,
+      attemptTimeoutMs: 36000,
+    });
+    if (geminiRes.response && geminiRes.activeModel) {
+      return {
+        response: geminiRes.response,
+        activeModel: geminiRes.activeModel,
+      };
+    }
+    if (geminiRes.lastError) lastError = geminiRes.lastError;
+    return null;
+  };
+
+  // When Gemini primary is requested (e.g. exam generation) and Gemini keys exist,
+  // try ALL configured Gemini keys/models first, rotating cleanly if one key is exhausted.
+  if (preferGemini && geminiKeys.length > 0) {
+    const primaryGemini = await tryGeminiPool();
+    if (primaryGemini) return primaryGemini;
+  }
 
   if (openRouterKeys.length > 0) {
     let currentMessages = messages;
@@ -1059,26 +1092,10 @@ export async function createCompletionWithFallback({
   }
 
   // 3. Google Gemini Free Tier fallback across multiple Gemini API keys
-  if (geminiKeys.length > 0) {
-    const geminiRes = await runProviderModelFallback({
-      provider: "gemini",
-      providerLabel: "Gemini free",
-      keys: geminiKeys,
-      models: GEMINI_FREE_MODELS,
-      messages,
-      temperature,
-      maxTokens: Math.min(8192, Math.max(max_tokens * 2, 4096)),
-      compactContextChars: 36000,
-      compactHistoryTurns: 8,
-      attemptTimeoutMs: 36000,
-    });
-    if (geminiRes.response && geminiRes.activeModel) {
-      return {
-        response: geminiRes.response,
-        activeModel: geminiRes.activeModel,
-      };
-    }
-    if (geminiRes.lastError) lastError = geminiRes.lastError;
+  // (Skipped if already attempted first via preferGemini)
+  if (!preferGemini && geminiKeys.length > 0) {
+    const geminiFallback = await tryGeminiPool();
+    if (geminiFallback) return geminiFallback;
   }
 
   // 4. Direct OpenAI fallback (across any configured OPENAI_API_KEY / _1..N)

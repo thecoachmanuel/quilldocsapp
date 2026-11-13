@@ -14,6 +14,8 @@ export interface RequestedQuestionCounts {
   theoryCount: number | null;
   totalCount: number | null;
   hasExplicitCount: boolean;
+  wantsMcq?: boolean;
+  wantsTheory?: boolean;
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -99,7 +101,7 @@ export function extractRequestedQuestionCounts(
     /\b(?:flashcards?|study\s+cards?)\b/i.test(text);
   const isExam =
     Boolean(options?.isExamRequest) ||
-    /\b(?:exam|examination|theory|essay|objective|obj|past\s+questions?|test\s+paper|mock\s+(?:exam|test)|midterm|marking\s+(?:scheme|guide))\b/i.test(
+    /\b(?:exam|examination|theory|essay|subjective|objective|obj|past\s+questions?|test\s+paper|mock\s+(?:exam|test)|midterm|marking\s+(?:scheme|guide))\b/i.test(
       text
     );
   const isQuiz =
@@ -229,6 +231,20 @@ export function extractRequestedQuestionCounts(
         totalCount = clampCount(parsed, MAX_EXAM_TOTAL);
       }
     }
+
+    const wantsMcq =
+      mcqCount !== null
+        ? mcqCount > 0
+        : theoryCount !== null
+          ? new RegExp(mcqNoun, "i").test(text)
+          : true;
+    const wantsTheory =
+      theoryCount !== null
+        ? theoryCount > 0
+        : mcqCount !== null
+          ? new RegExp(theoryNoun, "i").test(text)
+          : true;
+
     return {
       kind: "exam",
       mcqCount,
@@ -236,6 +252,8 @@ export function extractRequestedQuestionCounts(
       totalCount,
       hasExplicitCount:
         mcqCount !== null || theoryCount !== null || totalCount !== null,
+      wantsMcq,
+      wantsTheory,
     };
   }
 
@@ -306,9 +324,16 @@ export function mergeAndFitExamCounts(
   if (targetMcq === null && targetTheory === null && targetTotal !== null) {
     const totalNow = finalMcq.length + finalTheory.length;
     if (totalNow > targetTotal) {
-      const keepMcq = Math.min(finalMcq.length, targetTotal);
+      const keepTheory = Math.min(
+        finalTheory.length,
+        finalMcq.length > 0 ? Math.max(1, targetTotal - 1) : targetTotal
+      );
+      const keepMcq = Math.min(
+        finalMcq.length,
+        Math.max(0, targetTotal - keepTheory)
+      );
       finalMcq = finalMcq.slice(0, keepMcq);
-      finalTheory = finalTheory.slice(0, Math.max(0, targetTotal - keepMcq));
+      finalTheory = finalTheory.slice(0, keepTheory);
     }
   }
 
@@ -366,24 +391,44 @@ export function computeExamMissingCounts(
   counts: RequestedQuestionCounts
 ): { missingMcq: number; missingTheory: number } {
   if (counts.mcqCount !== null || counts.theoryCount !== null) {
-    return {
-      missingMcq:
-        counts.mcqCount !== null
-          ? Math.max(0, counts.mcqCount - exam.mcqQuestions.length)
-          : 0,
-      missingTheory:
-        counts.theoryCount !== null
-          ? Math.max(0, counts.theoryCount - exam.theoryQuestions.length)
-          : 0,
-    };
+    let missingMcq =
+      counts.mcqCount !== null
+        ? Math.max(0, counts.mcqCount - exam.mcqQuestions.length)
+        : 0;
+    let missingTheory =
+      counts.theoryCount !== null
+        ? Math.max(0, counts.theoryCount - exam.theoryQuestions.length)
+        : 0;
+    // If prompt requested both obj + theory without an explicit number on one side,
+    // still ensure that side is non-empty.
+    if (counts.wantsMcq && counts.mcqCount === null && exam.mcqQuestions.length === 0) {
+      missingMcq = 5;
+    }
+    if (counts.wantsTheory && counts.theoryCount === null && exam.theoryQuestions.length === 0) {
+      missingTheory = 2;
+    }
+    return { missingMcq, missingTheory };
   }
   if (counts.totalCount !== null) {
     const totalHave = exam.mcqQuestions.length + exam.theoryQuestions.length;
+    const missingTheory =
+      counts.wantsTheory && exam.theoryQuestions.length === 0
+        ? Math.min(2, Math.max(1, Math.round(counts.totalCount * 0.3)))
+        : 0;
+    const missingMcq = Math.max(
+      0,
+      counts.totalCount - totalHave - missingTheory
+    );
     return {
-      missingMcq: Math.max(0, counts.totalCount - totalHave),
-      missingTheory: 0,
+      missingMcq,
+      missingTheory,
     };
   }
-  return { missingMcq: 0, missingTheory: 0 };
+  return {
+    missingMcq:
+      counts.wantsMcq && exam.mcqQuestions.length === 0 ? 8 : 0,
+    missingTheory:
+      counts.wantsTheory && exam.theoryQuestions.length === 0 ? 2 : 0,
+  };
 }
 

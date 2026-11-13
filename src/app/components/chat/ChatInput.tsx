@@ -1,10 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send } from "lucide-react";
-import { useContext, useRef } from "react";
+import { GraduationCap, Send } from "lucide-react";
+import { useContext, useRef, useState } from "react";
 import { ChatContext } from "./ChatContext";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
 import { cn } from "@/lib/utils";
+import ExamBuilderModal from "./ExamBuilderModal";
 
 interface ChatInputProps {
   isDisabled?: boolean;
@@ -20,6 +21,7 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
     isExpanded: contextExpanded,
   } = useContext(ChatContext);
   const effectiveExpanded = isExpanded || contextExpanded || false;
+  const [isExamModalOpen, setIsExamModalOpen] = useState(false);
 
   const textarearef = useRef<HTMLTextAreaElement>(null);
   const { isKeyboardVisible } = useMobileViewport();
@@ -66,24 +68,43 @@ function ChatInput({ isDisabled, isExpanded = false }: ChatInputProps) {
                     textarearef.current?.focus();
                   }
                 }}
-                placeholder="Ask a question or request any language..."
-                className="w-full min-w-0 resize-none pr-12 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
+                placeholder="Ask a question, request exam questions (DOCX/PDF), or any language..."
+                className="w-full min-w-0 resize-none pr-24 text-base py-2.5 sm:py-3 scrollbar-thumb-blue scrollbar-thumb-rounded scrollbar-track-blue-lighter scrollbar-w-2 scrolling-touch"
               />
-              <Button
-                disabled={isLoading || isDisabled}
-                className="absolute bottom-1.5 right-1.5 h-8 w-8 p-0 flex items-center justify-center"
-                aria-label="send message"
-                onClick={() => {
-                  addMessage();
-                  textarearef.current?.focus();
-                }}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
+              <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading || isDisabled}
+                  onClick={() => setIsExamModalOpen(true)}
+                  title="Generate Exam Paper (MCQ & Theory in DOCX/PDF)"
+                  aria-label="Generate exam paper"
+                  className="h-8 px-2 text-xs font-semibold text-zinc-700 border-zinc-300 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 flex items-center gap-1"
+                >
+                  <GraduationCap className="h-3.5 w-3.5 text-blue-600" />
+                  <span className="hidden sm:inline">Exam</span>
+                </Button>
+                <Button
+                  disabled={isLoading || isDisabled}
+                  className="h-8 w-8 p-0 flex items-center justify-center"
+                  aria-label="send message"
+                  onClick={() => {
+                    addMessage();
+                    textarearef.current?.focus();
+                  }}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <ExamBuilderModal
+        open={isExamModalOpen}
+        onOpenChange={setIsExamModalOpen}
+      />
     </div>
   );
 }

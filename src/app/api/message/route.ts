@@ -467,7 +467,44 @@ export async function POST(req: NextRequest) {
   * When the user sends a \`QUIZ SUBMISSION\` or \`FLASHCARD SUBMISSION FOR AI GRADING & SOLUTIONS\` message containing their answers:
     - Grade every item accurately and fairly (for typed flashcard responses, accept equivalent phrasing, valid unit conversions, or mathematically equivalent forms).
     - Open with a clear **Final Score** (\`X / Y\` and percentage) and a structured breakdown showing each item's status (**Correct** vs **Incorrect / Needs Review**).
-    - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.`;
+    - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.
+- Standard Examination Papers (DOCX & PDF Export in Times New Roman 12pt, 1.5 Spacing):
+  * Whenever the user requests formal/standard **exam questions**, an **examination paper**, **theory / essay questions**, specific counts of **multiple choice (MCQ) + theory** questions, **docx/pdf downloadable questions**, or a **separate solutions / marking scheme**:
+    - ALWAYS output the full examination inside a \`\`\`exam fenced JSON block using this exact schema:
+\`\`\`exam
+{
+  "title": "Midterm / Final Examination: [Topic or Document Name]",
+  "courseCode": "Optional course/module title",
+  "duration": "2 Hours",
+  "instructions": [
+    "Attempt ALL questions in Section A and answer all questions in Section B.",
+    "Show all relevant workings, formulas, and units clearly."
+  ],
+  "includeSolutions": true,
+  "requestedFormats": ["docx", "pdf"],
+  "mcqQuestions": [
+    {
+      "id": 1,
+      "question": "Multiple-choice question stem grounded in document",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 2,
+      "marks": 1,
+      "explanation": "Concise solution and reasoning for the marking scheme."
+    }
+  ],
+  "theoryQuestions": [
+    {
+      "id": 1,
+      "question": "Rigorous theory/essay prompt grounded in document",
+      "subQuestions": ["(a) First sub-part [4 Marks]", "(b) Second sub-part [6 Marks]"],
+      "marks": 10,
+      "solution": "Complete model solution and marking rubric points."
+    }
+  ]
+}
+\`\`\`
+    - Strictly match the exact counts requested by the user (if user asks for 10 MCQs and 4 theory, generate ALL 10 in \`mcqQuestions\` and ALL 4 in \`theoryQuestions\`; if user asks only for theory, leave \`mcqQuestions: []\`; if user explicitly says no solutions, set \`includeSolutions: false\`).
+    - Quill's UI will automatically render this as a downloadable exam package formatted in **Times New Roman, 12pt font, 1.5 line spacing** for both **Word (.docx)** and **PDF**, with separate downloadable Questions and Solutions files.`;
 
     const systemPrompt = isMultiDoc
       ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
@@ -519,6 +556,24 @@ ${mathAndPracticeRule}
 ${singlePageConstraint}
 - Other Documents Awareness: If the user asks about an unloaded library document listed above, mention it by exact name and let them know they can reference it directly or tap "Add Docs" for Multi-Doc Chat.`;
 
+    const isExamRequest =
+      /\b(exam|examination|theory|essay|objective|obj|past questions?|test paper|mock\s+(?:exam|test)|midterm|marking scheme|marking guide|times new roman|section\s+a\b.*section\s+b)\b/i.test(
+        message
+      ) ||
+      (/\b(questions?|quiz|test)\b/i.test(message) &&
+        /\b(docx|word\s*(?:doc|document|file)|pdf|separate\s+solutions?|separate\s+answers?|1\.5\s*(?:line)?\s*spacing|font\s*12|12\s*pt)\b/i.test(
+          message
+        ));
+    const isPracticeRequest =
+      isExamRequest ||
+      /\b(quiz|test me|questions?|mcq|flashcards?|study cards|quiz submission|flashcard submission)\b/i.test(
+        message
+      );
+
+    const examTurnHint = isExamRequest
+      ? `\n\n[EXAM GENERATION INSTRUCTION: The user is manually or formally requesting a downloadable standard examination paper. You MUST respond with a single valid \`\`\`exam JSON fenced block containing "title", "duration", "instructions", "includeSolutions" (true unless the user explicitly asks for no solutions/answers), "requestedFormats": ["docx","pdf"], "mcqQuestions" (for any objective/multiple-choice questions requested), and "theoryQuestions" (for any theory/essay questions requested). If exact counts were omitted by the user, default cleanly to 10 MCQ and 4 Theory questions. Map natural terms like "objective"/"obj" -> mcqQuestions and "theory"/"essay" -> theoryQuestions. Keep all questions strictly grounded in the document context.]`
+      : "";
+
     const messages = [
       {
         role: "system" as const,
@@ -527,19 +582,24 @@ ${singlePageConstraint}
       ...formattedPrevMessages,
       {
         role: "user" as const,
-        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\nUSER QUESTION: ${message}`,
+        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\nUSER QUESTION: ${message}${examTurnHint}`,
       },
     ];
-
-    const isPracticeRequest =
-      /\b(quiz|test me|questions?|mcq|flashcards?|study cards|quiz submission|flashcard submission)\b/i.test(
-        message
-      );
 
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
-      max_tokens: isPracticeRequest ? (isPro ? 2800 : 2000) : isPro ? 1800 : 1100,
+      max_tokens: isExamRequest
+        ? isPro
+          ? 4000
+          : 3200
+        : isPracticeRequest
+          ? isPro
+            ? 2800
+            : 2000
+          : isPro
+            ? 1800
+            : 1100,
     });
 
     console.log(

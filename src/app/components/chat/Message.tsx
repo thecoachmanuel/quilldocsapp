@@ -7,9 +7,11 @@ import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import InteractiveQuiz from "./InteractiveQuiz";
 import InteractiveFlashcards from "./InteractiveFlashcards";
+import InteractiveExam from "./InteractiveExam";
 import {
   parseQuizData,
   parseFlashcardsData,
+  parseExamData,
   detectStreamingInteractiveFence,
 } from "@/lib/interactive-content";
 import { format } from "date-fns";
@@ -348,6 +350,11 @@ function formatMessageCitations(
 }
 
 function renderInteractiveBlock(lang: string, codeString: string) {
+  if (lang === "exam" || lang === "exam-json" || lang === "json:exam") {
+    const examData = parseExamData(codeString);
+    if (examData) return <InteractiveExam data={examData} />;
+  }
+
   if (lang === "quiz" || lang === "quiz-json" || lang === "json:quiz") {
     const quizData = parseQuizData(codeString);
     if (quizData) return <InteractiveQuiz data={quizData} />;
@@ -372,6 +379,8 @@ function renderInteractiveBlock(lang: string, codeString: string) {
       (codeString.trimStart().startsWith("{") ||
         codeString.trimStart().startsWith("[")))
   ) {
+    const examData = parseExamData(codeString);
+    if (examData) return <InteractiveExam data={examData} />;
     const quizData = parseQuizData(codeString);
     if (quizData) return <InteractiveQuiz data={quizData} />;
     const flashData = parseFlashcardsData(codeString);
@@ -726,6 +735,10 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                 !streamingFence.type &&
                 !formattedText.includes("```")
               ) {
+                const standaloneExam = parseExamData(formattedText);
+                if (standaloneExam) {
+                  return <InteractiveExam data={standaloneExam} />;
+                }
                 const standaloneQuiz = parseQuizData(formattedText);
                 if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
                   return <InteractiveQuiz data={standaloneQuiz} />;
@@ -762,12 +775,16 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" />
                       <div>
                         <p className="font-semibold text-zinc-900">
-                          {streamingFence.type === "quiz"
-                            ? "Designing your interactive practice quiz..."
-                            : "Preparing your interactive study flashcards..."}
+                          {streamingFence.type === "exam"
+                            ? "Preparing your standard examination paper (DOCX & PDF)..."
+                            : streamingFence.type === "quiz"
+                              ? "Designing your interactive practice quiz..."
+                              : "Preparing your interactive study flashcards..."}
                         </p>
                         <p className="text-xs text-zinc-500 mt-0.5">
-                          Formatting questions, options, and solutions
+                          {streamingFence.type === "exam"
+                            ? "Formatting MCQs, theory questions, and solutions in Times New Roman 12pt"
+                            : "Formatting questions, options, and solutions"}
                         </p>
                       </div>
                     </div>

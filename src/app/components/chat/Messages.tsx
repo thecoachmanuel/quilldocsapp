@@ -8,6 +8,7 @@ import {
   HelpCircle,
   BookOpen,
   Sigma,
+  GraduationCap,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 import Message, { DocSourceRef } from "./Message";
@@ -168,6 +169,10 @@ function Messages({
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 max-w-md">
                   {[
+                    {
+                      text: "Generate exam paper (10 MCQ, 3 Theory) with solutions",
+                      icon: GraduationCap,
+                    },
                     { text: "Quiz me across these documents", icon: HelpCircle },
                     { text: "Create comparative flashcards", icon: BookOpen },
                     { text: "Compare key statistics & data", icon: Sigma },
@@ -177,7 +182,7 @@ function Messages({
                       key={promptText}
                       type="button"
                       onClick={() => setInputValue(promptText)}
-                      className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-2xs"
+                      className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-sm"
                     >
                       <PromptIcon className="h-3 w-3 text-blue-600 shrink-0" />
                       <span>{promptText}</span>
@@ -194,6 +199,10 @@ function Messages({
                 </p>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 max-w-md">
                   {[
+                    {
+                      text: "Generate exam paper (10 MCQ, 3 Theory) with solutions",
+                      icon: GraduationCap,
+                    },
                     { text: "Quiz me on this document", icon: HelpCircle },
                     { text: "Create study flashcards", icon: BookOpen },
                     { text: "Explain key formulas & statistics", icon: Sigma },
@@ -203,7 +212,7 @@ function Messages({
                       key={promptText}
                       type="button"
                       onClick={() => setInputValue(promptText)}
-                      className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-2xs"
+                      className="inline-flex items-center gap-1 rounded-full bg-white border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-700 hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 transition shadow-sm"
                     >
                       <PromptIcon className="h-3 w-3 text-blue-600 shrink-0" />
                       <span>{promptText}</span>

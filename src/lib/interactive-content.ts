@@ -24,6 +24,34 @@ export interface FlashcardsData {
   cards: FlashcardItem[];
 }
 
+export interface ExamMcqQuestion {
+  id: number | string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  marks: number;
+  explanation: string;
+}
+
+export interface ExamTheoryQuestion {
+  id: number | string;
+  question: string;
+  subQuestions?: string[];
+  marks: number;
+  solution: string;
+}
+
+export interface ExamPaperData {
+  title: string;
+  courseCode?: string;
+  duration?: string;
+  instructions: string[];
+  includeSolutions: boolean;
+  requestedFormats?: Array<"docx" | "pdf">;
+  mcqQuestions: ExamMcqQuestion[];
+  theoryQuestions: ExamTheoryQuestion[];
+}
+
 export interface FlashcardEvaluation {
   status: "correct" | "partial" | "incorrect";
   score: number; // 1 for correct, 0.5 for partial, 0 for incorrect
@@ -131,25 +159,13 @@ function safeJsonParse(rawJson: string): any {
   }
 }
 
-/**
- * Recovers complete question/card objects if an LLM hit max_tokens right before closing the JSON array.
- */
-function recoverTruncatedPayload(jsonStr: string): any {
-  const isQuiz = /"questions"\s*:\s*\[/i.test(jsonStr);
-  const isFlash = /"cards"\s*:\s*\[/i.test(jsonStr);
-  if (!isQuiz && !isFlash) return null;
-
-  const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]*)"/i);
-  const title = titleMatch ? titleMatch[1] : undefined;
-
-  const arrayKey = isQuiz ? "questions" : "cards";
+function collectCompleteArrayObjects(jsonStr: string, arrayKey: string): any[] {
   const arrStart = jsonStr.search(new RegExp(`"${arrayKey}"\\s*:\\s*\\[`, "i"));
-  if (arrStart === -1) return null;
+  if (arrStart === -1) return [];
 
   const bracketIdx = jsonStr.indexOf("[", arrStart);
-  if (bracketIdx === -1) return null;
+  if (bracketIdx === -1) return [];
 
-  // Walk character-by-character to collect complete top-level objects inside the array
   const items: any[] = [];
   let depth = 0;
   let inString = false;
@@ -186,22 +202,83 @@ function recoverTruncatedPayload(jsonStr: string): any {
         }
         objStart = -1;
       }
+    } else if (ch === "]" && depth === 0) {
+      break;
     }
   }
 
+  return items;
+}
+
+/**
+ * Recovers complete question/card/exam objects if an LLM hit max_tokens right before closing the JSON array.
+ */
+function recoverTruncatedPayload(jsonStr: string): any {
+  const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]*)"/i);
+  const title = titleMatch ? titleMatch[1] : undefined;
+
+  const isExam =
+    /"mcqQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"theoryQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"multipleChoice"\s*:\s*\[/i.test(jsonStr) ||
+    /"essayQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"objectiveQuestions"\s*:\s*\[/i.test(jsonStr) ||
+    /"section[AB]"\s*:\s*\[/i.test(jsonStr);
+
+  if (isExam) {
+    const mcqQuestions = [
+      ...collectCompleteArrayObjects(jsonStr, "mcqQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "multipleChoice"),
+      ...collectCompleteArrayObjects(jsonStr, "mcqs"),
+      ...collectCompleteArrayObjects(jsonStr, "objectiveQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "objectives"),
+      ...collectCompleteArrayObjects(jsonStr, "sectionA"),
+    ];
+    const theoryQuestions = [
+      ...collectCompleteArrayObjects(jsonStr, "theoryQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "essayQuestions"),
+      ...collectCompleteArrayObjects(jsonStr, "theory"),
+      ...collectCompleteArrayObjects(jsonStr, "sectionB"),
+    ];
+    if (mcqQuestions.length === 0 && theoryQuestions.length === 0) return null;
+
+    const courseMatch = jsonStr.match(/"courseCode"\s*:\s*"([^"]*)"/i);
+    const durationMatch = jsonStr.match(/"duration"\s*:\s*"([^"]*)"/i);
+    const includeSolMatch = jsonStr.match(
+      /"includeSolutions"\s*:\s*(true|false)/i
+    );
+    return {
+      title,
+      courseCode: courseMatch ? courseMatch[1] : undefined,
+      duration: durationMatch ? durationMatch[1] : undefined,
+      includeSolutions: includeSolMatch
+        ? includeSolMatch[1].toLowerCase() === "true"
+        : true,
+      mcqQuestions,
+      theoryQuestions,
+    };
+  }
+
+  const isQuiz = /"questions"\s*:\s*\[/i.test(jsonStr);
+  const isFlash = /"cards"\s*:\s*\[/i.test(jsonStr);
+  if (!isQuiz && !isFlash) return null;
+
+  const arrayKey = isQuiz ? "questions" : "cards";
+  const items = collectCompleteArrayObjects(jsonStr, arrayKey);
   if (items.length === 0) return null;
   return { title, [arrayKey]: items };
 }
 
 /**
- * Detects an unclosed ```quiz or ```flashcards fenced block during streaming
+ * Detects an unclosed ```quiz, ```flashcards, or ```exam fenced block during streaming
  * so the UI can show a clean loading skeleton instead of flickering partial JSON.
  */
 export function detectStreamingInteractiveFence(rawText: string): {
-  type: "quiz" | "flashcards" | null;
+  type: "quiz" | "flashcards" | "exam" | null;
   prefixText: string;
 } {
-  const openRe = /```(quiz|json:quiz|quiz-json|flashcards|flashcard|json:flashcards|cards)\b/gi;
+  const openRe =
+    /```(quiz|json:quiz|quiz-json|flashcards|flashcard|json:flashcards|cards|exam|json:exam|exam-json)\b/gi;
   let lastMatch: RegExpExecArray | null = null;
   let m: RegExpExecArray | null;
   while ((m = openRe.exec(rawText)) !== null) {
@@ -216,7 +293,11 @@ export function detectStreamingInteractiveFence(rawText: string): {
   }
 
   const lang = lastMatch[1].toLowerCase();
-  const type = lang.includes("flash") || lang === "cards" ? "flashcards" : "quiz";
+  const type = lang.includes("exam")
+    ? "exam"
+    : lang.includes("flash") || lang === "cards"
+      ? "flashcards"
+      : "quiz";
   return {
     type,
     prefixText: rawText.slice(0, lastMatch.index).trimEnd(),
@@ -722,5 +803,292 @@ export function evaluateFlashcardAnswer(
     status: "incorrect",
     score: 0,
     reason: "Does not match the official solution — review below or ask AI.",
+  };
+}
+
+/**
+ * Parses structured JSON exam paper containing Multiple-Choice and/or Theory questions
+ * plus optional separate marking-scheme solutions.
+ */
+export function parseExamData(raw: string): ExamPaperData | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const fenceMatch =
+    trimmed.match(
+      /```(?:exam|json:exam|exam-json|json)?\s*([\s\S]*?)```/i
+    ) || trimmed.match(/<exam>([\s\S]*?)<\/exam>/i);
+
+  const candidateJsonStr = fenceMatch
+    ? fenceMatch[1].trim()
+    : trimmed.replace(/^```[\w:-]*\s*\n?/, "").trim();
+
+  const parsedRaw = safeJsonParse(candidateJsonStr);
+  const parsed =
+    parsedRaw?.exam && typeof parsedRaw.exam === "object"
+      ? parsedRaw.exam
+      : parsedRaw?.data &&
+          typeof parsedRaw.data === "object" &&
+          (parsedRaw.data.mcqQuestions ||
+            parsedRaw.data.theoryQuestions ||
+            parsedRaw.data.sectionA ||
+            parsedRaw.data.sectionB)
+        ? parsedRaw.data
+        : parsedRaw;
+
+  if (!parsed || typeof parsed !== "object") {
+    return parseMarkdownExam(trimmed);
+  }
+
+  const rawMcqs =
+    parsed.mcqQuestions ??
+    parsed.multipleChoice ??
+    parsed.mcqs ??
+    parsed.objectiveQuestions ??
+    parsed.objectives ??
+    parsed.sectionA ??
+    [];
+
+  const rawTheory =
+    parsed.theoryQuestions ??
+    parsed.essayQuestions ??
+    parsed.theory ??
+    parsed.structuredQuestions ??
+    parsed.sectionB ??
+    [];
+
+  if (
+    (!Array.isArray(rawMcqs) || rawMcqs.length === 0) &&
+    (!Array.isArray(rawTheory) || rawTheory.length === 0)
+  ) {
+    return parseMarkdownExam(trimmed);
+  }
+
+  const seenMcqIds = new Set<string>();
+  const mcqQuestions: ExamMcqQuestion[] = rawMcqs
+    .map((q: any, idx: number) => {
+      if (!q || typeof q !== "object") return null;
+      const questionText = String(q.question || q.prompt || "").trim();
+      const options = extractOptionsList(q.options ?? q.choices ?? q.answers);
+      if (!questionText || options.length < 2) return null;
+
+      const marksNum = Number(q.marks);
+      return {
+        id: makeUniqueId(q.id, idx, seenMcqIds),
+        question: questionText,
+        options,
+        correctIndex: resolveCorrectOptionIndex(q, options),
+        marks: !isNaN(marksNum) && marksNum > 0 ? marksNum : 1,
+        explanation: String(
+          q.explanation || q.solution || q.rationale || ""
+        ).trim(),
+      };
+    })
+    .filter((q: ExamMcqQuestion | null): q is ExamMcqQuestion => q !== null);
+
+  const seenTheoryIds = new Set<string>();
+  const theoryQuestions: ExamTheoryQuestion[] = rawTheory
+    .map((q: any, idx: number) => {
+      if (!q || typeof q !== "object") return null;
+      const questionText = String(q.question || q.prompt || "").trim();
+      if (!questionText) return null;
+
+      const subQuestions = Array.isArray(q.subQuestions ?? q.parts)
+        ? (q.subQuestions ?? q.parts)
+            .map((p: any) => String(p ?? "").trim())
+            .filter(Boolean)
+        : undefined;
+
+      const marksNum = Number(q.marks);
+      return {
+        id: makeUniqueId(q.id, idx, seenTheoryIds),
+        question: questionText,
+        subQuestions:
+          subQuestions && subQuestions.length > 0 ? subQuestions : undefined,
+        marks: !isNaN(marksNum) && marksNum > 0 ? marksNum : 10,
+        solution: String(
+          q.solution || q.answer || q.markingScheme || q.explanation || ""
+        ).trim(),
+      };
+    })
+    .filter(
+      (q: ExamTheoryQuestion | null): q is ExamTheoryQuestion => q !== null
+    );
+
+  if (mcqQuestions.length === 0 && theoryQuestions.length === 0) {
+    return parseMarkdownExam(trimmed);
+  }
+
+  const instructions = Array.isArray(parsed.instructions)
+    ? parsed.instructions.map((s: any) => String(s ?? "").trim()).filter(Boolean)
+    : [];
+
+  const hasAnySolutions =
+    mcqQuestions.some((q) => Boolean(q.explanation)) ||
+    theoryQuestions.some((q) => Boolean(q.solution));
+
+  const includeSolutions =
+    typeof parsed.includeSolutions === "boolean"
+      ? parsed.includeSolutions && (hasAnySolutions || mcqQuestions.length > 0)
+      : hasAnySolutions;
+
+  const rawFormats = Array.isArray(parsed.requestedFormats)
+    ? parsed.requestedFormats
+        .map((f: any) => String(f ?? "").toLowerCase().trim())
+        .filter((f: string): f is "docx" | "pdf" => f === "docx" || f === "pdf")
+    : undefined;
+
+  return {
+    title: String(parsed.title || "Standard Examination Paper").trim(),
+    courseCode: parsed.courseCode ? String(parsed.courseCode).trim() : undefined,
+    duration: parsed.duration ? String(parsed.duration).trim() : undefined,
+    instructions:
+      instructions.length > 0
+        ? instructions
+        : [
+            mcqQuestions.length > 0 && theoryQuestions.length > 0
+              ? "Attempt ALL questions in Section A and follow instructions in Section B."
+              : "Attempt ALL questions clearly and concisely.",
+            "Show all relevant workings, formulas, and units where applicable.",
+          ],
+    includeSolutions,
+    requestedFormats:
+      rawFormats && rawFormats.length > 0 ? rawFormats : ["docx", "pdf"],
+    mcqQuestions,
+    theoryQuestions,
+  };
+}
+
+/**
+ * Fallback parser when an LLM formats a standard exam in Markdown sections
+ * (Section A MCQs + Section B Theory + optional Solutions) without ```exam JSON.
+ */
+function parseMarkdownExam(text: string): ExamPaperData | null {
+  const hasExamMarker =
+    /(?:SECTION\s+[AB]|THEORY\s*(?:\/|\s*AND\s*|\s*&\s*)?\s*(?:ESSAY\s*)?QUESTIONS?|ESSAY\s+QUESTIONS?|MARKING\s+(?:SCHEME|GUIDE))/i.test(
+      text
+    );
+  if (!hasExamMarker) return null;
+
+  const solSplit = text.match(
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:SEPARATE\s+SOLUTIONS?|SOLUTIONS?|MARKING\s+(?:SCHEME|GUIDE)|ANSWER\s+KEY)\s*:?\*{0,2}\s*\n([\s\S]+)$/i
+  );
+  const questionsArea = solSplit ? text.slice(0, solSplit.index).trim() : text;
+  const solutionsArea = solSplit ? solSplit[1].trim() : "";
+
+  const sectionBMatch = questionsArea.match(
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})SECTION\s*B\b[^\n]*\n([\s\S]+)$/i
+  );
+
+  const mcqSource = sectionBMatch
+    ? questionsArea.slice(0, sectionBMatch.index).trim()
+    : questionsArea;
+  const theorySource = sectionBMatch ? sectionBMatch[1].trim() : "";
+
+  const parsedMcq = parseMarkdownQuiz(mcqSource);
+  const mcqQuestions: ExamMcqQuestion[] = parsedMcq
+    ? parsedMcq.questions.map((q) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+        correctIndex: q.correctIndex >= 0 ? q.correctIndex : 0,
+        marks: 1,
+        explanation: q.explanation || "",
+      }))
+    : [];
+
+  const theoryQuestions: ExamTheoryQuestion[] = [];
+  if (theorySource) {
+    const theoryBlocks = theorySource.split(
+      /(?=(?:^|\n)(?:###?\s*)?(?:\*{0,2}(?:Question|Q)\s*\d+[:.\)\s*]|\*{0,2}\d+[\.\)]\s+))/i
+    );
+
+    for (const block of theoryBlocks) {
+      const lines = block
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.length === 0) continue;
+
+      // Skip Section B instruction line
+      if (/^instruction\s*:/i.test(lines[0])) continue;
+
+      const headerLine = lines[0]
+        .replace(/^#{1,4}\s*/, "")
+        .replace(/^\*{0,2}(?:Question|Q)\s*\d+[:.]?\*{0,2}\s*/i, "")
+        .replace(/^\*{0,2}\d+[\.\)]\*{0,2}\s*/, "")
+        .trim();
+
+      if (!headerLine) continue;
+
+      const marksMatch = block.match(/\[(\d+)\s*marks?\]/i);
+      const marks = marksMatch ? parseInt(marksMatch[1], 10) : 10;
+      const cleanQuestion = headerLine.replace(/\[\d+\s*marks?\]/gi, "").trim();
+
+      const subQuestions: string[] = [];
+      let solution = "";
+      for (let i = 1; i < lines.length; i++) {
+        const l = lines[i];
+        if (/^(?:\([a-z]\)|[a-z]\))/i.test(l)) {
+          subQuestions.push(l);
+        } else if (/^(?:Solution|Answer|Marking)\s*[:\-]/i.test(l)) {
+          solution = l.replace(/^(?:Solution|Answer|Marking(?:\s*Guide)?)\s*[:\-]\s*/i, "").trim();
+        } else if (solution) {
+          solution += ` ${l}`;
+        }
+      }
+
+      theoryQuestions.push({
+        id: theoryQuestions.length + 1,
+        question: cleanQuestion,
+        subQuestions: subQuestions.length > 0 ? subQuestions : undefined,
+        marks,
+        solution,
+      });
+    }
+  }
+
+  // Attach any solutions from trailing Marking Scheme block
+  if (solutionsArea && theoryQuestions.length > 0) {
+    const theorySolMatch = solutionsArea.match(
+      /(?:SECTION\s*B[^\n]*\n)([\s\S]+)$/i
+    );
+    const theorySolArea = theorySolMatch ? theorySolMatch[1] : solutionsArea;
+    theoryQuestions.forEach((tq, idx) => {
+      if (tq.solution) return;
+      const m = theorySolArea.match(
+        new RegExp(
+          `(?:Question|Q)?\\s*${idx + 1}[\\.:\\)]\\s*([\\s\\S]*?)(?=(?:\\n(?:Question|Q)?\\s*${idx + 2}[\\.:\\)]|$))`,
+          "i"
+        )
+      );
+      if (m && m[1].trim()) {
+        tq.solution = m[1].trim();
+      }
+    });
+  }
+
+  if (mcqQuestions.length === 0 && theoryQuestions.length === 0) return null;
+
+  const titleMatch = text.match(/^(?:#{1,3}\s*|\*\*)(.+?)(?:\*\*)?\n/);
+  const includeSolutions =
+    Boolean(solutionsArea) ||
+    theoryQuestions.some((q) => Boolean(q.solution)) ||
+    Boolean(parsedMcq?.hasAnswerKey);
+
+  return {
+    title: titleMatch
+      ? titleMatch[1].replace(/[#*]/g, "").trim()
+      : "Standard Examination Paper",
+    instructions: [
+      mcqQuestions.length > 0 && theoryQuestions.length > 0
+        ? "Attempt ALL questions in Section A and answer all questions in Section B."
+        : "Attempt ALL questions clearly and concisely.",
+      "Show all relevant workings, formulas, and units where applicable.",
+    ],
+    includeSolutions,
+    requestedFormats: ["docx", "pdf"],
+    mcqQuestions,
+    theoryQuestions,
   };
 }

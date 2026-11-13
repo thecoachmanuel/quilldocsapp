@@ -74,8 +74,11 @@ function Messages({
       </span>
     ),
   };
+  const hasStreamingReply = Boolean(
+    messages?.some((m: any) => m.id === "ai-response" && Boolean(m.text))
+  );
   const combinedMessages = [
-    ...(isAiThinking ? [loadingMessage] : []),
+    ...(isAiThinking && !hasStreamingReply ? [loadingMessage] : []),
     ...(messages ?? []),
   ];
 
@@ -119,6 +122,7 @@ function Messages({
                   key={message.id}
                   isNextMessageSamePerson={isNextMessageSamePerson}
                   isExpanded={effectiveExpanded}
+                  isStreaming={message.id === "ai-response" && isAiThinking}
                   docSources={effectiveDocSources}
                 />
               );
@@ -129,6 +133,7 @@ function Messages({
                   key={message.id}
                   isNextMessageSamePerson={isNextMessageSamePerson}
                   isExpanded={effectiveExpanded}
+                  isStreaming={message.id === "ai-response" && isAiThinking}
                   docSources={effectiveDocSources}
                 />
               );

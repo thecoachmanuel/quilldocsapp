@@ -35,6 +35,7 @@ interface MessageProps {
   message: ExtendedMessage;
   isNextMessageSamePerson: boolean;
   isExpanded?: boolean;
+  isStreaming?: boolean;
   docSources?: DocSourceRef[];
 }
 
@@ -473,7 +474,13 @@ const REHYPE_PLUGINS = [rehypeKatex];
 
 const Message = forwardRef<HTMLDivElement, MessageProps>(
   (
-    { message, isNextMessageSamePerson, isExpanded = false, docSources = [] },
+    {
+      message,
+      isNextMessageSamePerson,
+      isExpanded = false,
+      isStreaming = false,
+      docSources = [],
+    },
     ref
   ) => {
     const [hasCopied, setHasCopied] = useState<boolean>(false);
@@ -726,26 +733,25 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                 return formattedText;
               }
 
-              const streamingFence = !message.isUserMessage
-                ? detectStreamingInteractiveFence(formattedText)
-                : { type: null, prefixText: "" };
+              const streamingFence =
+                !message.isUserMessage && isStreaming
+                  ? detectStreamingInteractiveFence(formattedText)
+                  : { type: null, prefixText: "" };
 
-              if (
-                !message.isUserMessage &&
-                !streamingFence.type &&
-                !formattedText.includes("```")
-              ) {
+              if (!message.isUserMessage && !streamingFence.type) {
                 const standaloneExam = parseExamData(formattedText);
                 if (standaloneExam) {
                   return <InteractiveExam data={standaloneExam} />;
                 }
-                const standaloneQuiz = parseQuizData(formattedText);
-                if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
-                  return <InteractiveQuiz data={standaloneQuiz} />;
-                }
-                const standaloneFlashcards = parseFlashcardsData(formattedText);
-                if (standaloneFlashcards && standaloneFlashcards.cards.length >= 2) {
-                  return <InteractiveFlashcards data={standaloneFlashcards} />;
+                if (!formattedText.includes("```")) {
+                  const standaloneQuiz = parseQuizData(formattedText);
+                  if (standaloneQuiz && standaloneQuiz.questions.length >= 2) {
+                    return <InteractiveQuiz data={standaloneQuiz} />;
+                  }
+                  const standaloneFlashcards = parseFlashcardsData(formattedText);
+                  if (standaloneFlashcards && standaloneFlashcards.cards.length >= 2) {
+                    return <InteractiveFlashcards data={standaloneFlashcards} />;
+                  }
                 }
               }
 
@@ -776,14 +782,14 @@ const Message = forwardRef<HTMLDivElement, MessageProps>(
                       <div>
                         <p className="font-semibold text-zinc-900">
                           {streamingFence.type === "exam"
-                            ? "Preparing your standard examination paper (DOCX & PDF)..."
+                            ? "Preparing your standard examination paper..."
                             : streamingFence.type === "quiz"
                               ? "Designing your interactive practice quiz..."
                               : "Preparing your interactive study flashcards..."}
                         </p>
                         <p className="text-xs text-zinc-500 mt-0.5">
                           {streamingFence.type === "exam"
-                            ? "Formatting MCQs, theory questions, and solutions in Times New Roman 12pt"
+                            ? "Formatting questions & solutions in Times New Roman 12pt"
                             : "Formatting questions, options, and solutions"}
                         </p>
                       </div>

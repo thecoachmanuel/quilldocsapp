@@ -20,6 +20,8 @@ import {
 import { NextRequest } from "next/server";
 import { OpenAIStream, StreamingTextResponse } from "ai";
 
+export const maxDuration = 60;
+
 interface PerDocContextResult {
   file: any;
   context: string;
@@ -590,8 +592,8 @@ ${singlePageConstraint}
       ? Math.min(15, parseInt(requestedTheoryMatch[1], 10))
       : 4;
     const examMaxTokens = Math.min(
-      isPro ? 3200 : 2600,
-      Math.max(1200, 300 + estMcqCount * 85 + estTheoryCount * 170)
+      isPro ? 3600 : 3000,
+      Math.max(1800, 450 + estMcqCount * 100 + estTheoryCount * 200)
     );
 
     const examTurnHint = isExamRequest

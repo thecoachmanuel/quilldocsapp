@@ -247,6 +247,15 @@ function recoverTruncatedPayload(jsonStr: string): any {
     const includeSolMatch = jsonStr.match(
       /"includeSolutions"\s*:\s*(true|false)/i
     );
+    const formatsMatch = jsonStr.match(
+      /"requestedFormats"\s*:\s*\[([^\]]*)\]/i
+    );
+    const requestedFormats = formatsMatch
+      ? formatsMatch[1]
+          .split(",")
+          .map((s) => s.replace(/["'\s]/g, "").toLowerCase())
+          .filter((f) => f === "docx" || f === "pdf")
+      : undefined;
     return {
       title,
       courseCode: courseMatch ? courseMatch[1] : undefined,
@@ -254,6 +263,9 @@ function recoverTruncatedPayload(jsonStr: string): any {
       includeSolutions: includeSolMatch
         ? includeSolMatch[1].toLowerCase() === "true"
         : true,
+      ...(requestedFormats && requestedFormats.length > 0
+        ? { requestedFormats }
+        : {}),
       mcqQuestions,
       theoryQuestions,
     };
@@ -817,7 +829,9 @@ export function parseExamData(raw: string): ExamPaperData | null {
   const fenceMatch =
     trimmed.match(
       /```(?:exam|json:exam|exam-json|json)?\s*([\s\S]*?)```/i
-    ) || trimmed.match(/<exam>([\s\S]*?)<\/exam>/i);
+    ) ||
+    trimmed.match(/<exam>([\s\S]*?)<\/exam>/i) ||
+    trimmed.match(/```(?:exam|json:exam|exam-json|json)\s*([\s\S]+)$/i);
 
   const candidateJsonStr = fenceMatch
     ? fenceMatch[1].trim()

@@ -98,6 +98,7 @@ export function getAiClient(
       apiKey: apiKeyOverride || orKeys[0] || "dummy-key",
       baseURL: OPENROUTER_BASE_URL,
       maxRetries: 0,
+      timeout: 22000,
       defaultHeaders: {
         "HTTP-Referer":
           process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
@@ -111,12 +112,14 @@ export function getAiClient(
       apiKey: apiKeyOverride || gmKeys[0] || "dummy-key",
       baseURL: GEMINI_OPENAI_BASE_URL,
       maxRetries: 0,
+      timeout: 22000,
     });
   }
 
   return new OpenAI({
     apiKey: apiKeyOverride || oaKeys[0] || "dummy-key",
     maxRetries: 0,
+    timeout: 22000,
   });
 }
 
@@ -613,6 +616,7 @@ async function getFreeOpenRouterCandidates(): Promise<string[]> {
         .filter((m) => {
           const id = String(m?.id || "");
           if (!id.endsWith(":free")) return false;
+          if (/r1|qwq|thinking|reasoning/i.test(id)) return false;
           const promptCost = Number(m?.pricing?.prompt ?? 1);
           const compCost = Number(m?.pricing?.completion ?? 1);
           if (promptCost !== 0 || compCost !== 0) return false;
@@ -980,7 +984,7 @@ export async function createCompletionWithFallback({
       models: freeCandidates,
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 1400),
+      maxTokens: Math.min(max_tokens, 3200),
       compactContextChars: 20000,
       compactHistoryTurns: 6,
     });
@@ -999,7 +1003,7 @@ export async function createCompletionWithFallback({
       models: GEMINI_FREE_MODELS,
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 2000),
+      maxTokens: Math.min(max_tokens, 3600),
       compactContextChars: 36000,
       compactHistoryTurns: 8,
     });
@@ -1021,7 +1025,7 @@ export async function createCompletionWithFallback({
       models: ["gpt-4o-mini", "gpt-3.5-turbo"],
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 1600),
+      maxTokens: Math.min(max_tokens, 3200),
       compactContextChars: 24000,
       compactHistoryTurns: 6,
     });

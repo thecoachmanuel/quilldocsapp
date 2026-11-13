@@ -30,6 +30,7 @@ import {
   peekPendingPageJump,
 } from "@/lib/page-jump";
 import { cn } from "@/lib/utils";
+import { useHorizontalWheelScroll } from "@/lib/use-horizontal-wheel-scroll";
 
 interface DocxRendererProps {
   fileId: string;
@@ -612,6 +613,8 @@ export default function DocxRenderer({
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState<number>(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useHorizontalWheelScroll<HTMLDivElement>();
+  const fullscreenToolbarRef = useHorizontalWheelScroll<HTMLDivElement>();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement>(null);
@@ -1031,8 +1034,11 @@ export default function DocxRenderer({
   return (
     <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
       {/* Top Toolbar matching Quill app design with Page Navigation */}
-      <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 shrink-0">
+      <div
+        ref={toolbarRef}
+        className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full min-w-0 border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1.5 overflow-x-auto no-scrollbar overscroll-x-contain"
+      >
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <Button
             disabled={currPage <= 1 || renderMode === "clean"}
             onClick={handlePrev}
@@ -1054,9 +1060,9 @@ export default function DocxRenderer({
                   setCurrPage(val);
                 }
               }}
-              className="w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm"
+              className="w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm shrink-0"
             />
-            <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5">
+            <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5 whitespace-nowrap shrink-0">
               <span>/</span>
               <span>{totalPages}</span>
             </p>
@@ -1073,7 +1079,7 @@ export default function DocxRenderer({
             <ChevronUp className="h-4 w-4" />
           </Button>
 
-          <div className="ml-1 hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0">
+          <div className="ml-1 hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0 whitespace-nowrap">
             <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
             <span>Word</span>
           </div>
@@ -1084,7 +1090,7 @@ export default function DocxRenderer({
               type="button"
               onClick={() => setRenderMode("page")}
               className={cn(
-                "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all whitespace-nowrap shrink-0",
                 renderMode === "page"
                   ? "bg-white text-zinc-900 font-semibold shadow-sm"
                   : "text-zinc-600 hover:text-zinc-900"
@@ -1098,7 +1104,7 @@ export default function DocxRenderer({
               type="button"
               onClick={() => setRenderMode("clean")}
               className={cn(
-                "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all whitespace-nowrap shrink-0",
                 renderMode === "clean"
                   ? "bg-white text-zinc-900 font-semibold shadow-sm"
                   : "text-zinc-600 hover:text-zinc-900"
@@ -1110,7 +1116,7 @@ export default function DocxRenderer({
           </div>
         </div>
 
-        <div className="space-x-0.5 sm:space-x-1.5 flex items-center shrink-0">
+        <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
           {/* In-Document Keyword Search (Ctrl+F) */}
           {isSearchOpen ? (
             <div className="flex items-center gap-1 bg-zinc-100 p-0.5 sm:p-1 rounded-md border border-zinc-300 shrink-0">
@@ -1175,7 +1181,7 @@ export default function DocxRenderer({
           ) : (
             <Button
               variant="ghost"
-              className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm text-zinc-600 hover:text-zinc-900"
+              className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm text-zinc-600 hover:text-zinc-900 shrink-0 whitespace-nowrap"
               onClick={() => {
                 setIsSearchOpen(true);
                 setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -1183,7 +1189,7 @@ export default function DocxRenderer({
               title="Find text in document (Ctrl+F)"
               aria-label="Find in document"
             >
-              <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
               <span className="hidden lg:inline text-xs">Find</span>
             </Button>
           )}
@@ -1192,13 +1198,13 @@ export default function DocxRenderer({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm"
+                className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm shrink-0 whitespace-nowrap"
                 aria-label="zoom"
                 variant="ghost"
               >
-                <ZoomIn className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <ZoomIn className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 {Math.round(scale * 100)}%
-                <ChevronDown className="h-3 w-3 opacity-50" />
+                <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -1228,21 +1234,24 @@ export default function DocxRenderer({
             <DialogTrigger asChild>
               <Button
                 variant="ghost"
-                className="gap-1.5 px-1.5 sm:px-2.5 h-8"
+                className="gap-1.5 px-1.5 sm:px-2.5 h-8 shrink-0"
                 aria-label="fullscreen"
                 title="Expand document view"
               >
-                <Expand className="h-4 w-4" />
+                <Expand className="h-4 w-4 shrink-0" />
               </Button>
             </DialogTrigger>
             <DialogContent className="w-[98vw] max-w-[98vw] sm:max-w-[95vw] xl:max-w-7xl h-[92dvh] sm:h-[92vh] p-2 sm:p-5 flex flex-col overflow-hidden gap-0">
-              <div className="shrink-0 flex items-center justify-between pb-2.5 border-b border-zinc-200 pr-8 gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0">
-                    <FileText className="h-3.5 w-3.5 text-blue-600" />
+              <div
+                ref={fullscreenToolbarRef}
+                className="shrink-0 flex items-center justify-between pb-2.5 border-b border-zinc-200 pr-9 gap-2 w-full min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain"
+              >
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0 whitespace-nowrap">
+                    <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
                     <span>Word Document</span>
                   </div>
-                  <span className="font-semibold text-xs sm:text-sm text-zinc-900 truncate max-w-[100px] sm:max-w-md">
+                  <span className="font-semibold text-xs sm:text-sm text-zinc-900 truncate max-w-[100px] sm:max-w-md shrink-0">
                     {fileName || "Document"}
                   </span>
                 </div>
@@ -1253,13 +1262,13 @@ export default function DocxRenderer({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 sm:h-8 px-2 text-xs"
+                        className="h-7 sm:h-8 px-2 text-xs shrink-0 whitespace-nowrap"
                         disabled={currPage <= 1}
                         onClick={handlePrev}
                       >
                         Prev
                       </Button>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         <Input
                           value={currPage}
                           onChange={(e) => {
@@ -1268,16 +1277,16 @@ export default function DocxRenderer({
                               setCurrPage(val);
                             }
                           }}
-                          className="w-9 sm:w-11 h-7 sm:h-8 text-center px-1 text-xs"
+                          className="w-9 sm:w-11 h-7 sm:h-8 text-center px-1 text-xs shrink-0"
                         />
-                        <span className="text-xs text-zinc-600 font-medium whitespace-nowrap">
+                        <span className="text-xs text-zinc-600 font-medium whitespace-nowrap shrink-0">
                           / {totalPages}
                         </span>
                       </div>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 sm:h-8 px-2 text-xs"
+                        className="h-7 sm:h-8 px-2 text-xs shrink-0 whitespace-nowrap"
                         disabled={currPage >= totalPages}
                         onClick={handleNext}
                       >
@@ -1287,12 +1296,12 @@ export default function DocxRenderer({
                   )}
 
                   {/* Page View / Reader Toggle inside Expanded View */}
-                  <div className="flex items-center bg-zinc-100 p-0.5 rounded-md text-xs border border-zinc-200">
+                  <div className="flex items-center bg-zinc-100 p-0.5 rounded-md text-xs border border-zinc-200 shrink-0">
                     <button
                       type="button"
                       onClick={() => setRenderMode("page")}
                       className={cn(
-                        "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                        "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all whitespace-nowrap shrink-0",
                         renderMode === "page"
                           ? "bg-white text-zinc-900 font-semibold shadow-sm"
                           : "text-zinc-600 hover:text-zinc-900"
@@ -1305,7 +1314,7 @@ export default function DocxRenderer({
                       type="button"
                       onClick={() => setRenderMode("clean")}
                       className={cn(
-                        "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all",
+                        "px-1.5 sm:px-2 py-1 rounded flex items-center gap-1 transition-all whitespace-nowrap shrink-0",
                         renderMode === "clean"
                           ? "bg-white text-zinc-900 font-semibold shadow-sm"
                           : "text-zinc-600 hover:text-zinc-900"
@@ -1321,11 +1330,11 @@ export default function DocxRenderer({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 sm:h-8 gap-1 text-xs px-2"
+                        className="h-7 sm:h-8 gap-1 text-xs px-2 shrink-0 whitespace-nowrap"
                       >
-                        <ZoomIn className="h-3.5 w-3.5" />
+                        <ZoomIn className="h-3.5 w-3.5 shrink-0" />
                         {Math.round(scale * 100)}%
-                        <ChevronDown className="h-3 w-3 opacity-50" />
+                        <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>

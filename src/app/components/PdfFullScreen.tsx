@@ -12,6 +12,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import { useResizeDetector } from "react-resize-detector";
 import SimpleBar from "simplebar-react";
 import { useToast } from "@/components/ui/use-toast";
+import { useHorizontalWheelScroll } from "@/lib/use-horizontal-wheel-scroll";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.js`;
 
@@ -27,6 +28,7 @@ const PdfFullscreen = ({ fileUrl }: PdfFullscreenProps) => {
   const { toast } = useToast();
 
   const { width, ref } = useResizeDetector();
+  const toolbarRef = useHorizontalWheelScroll<HTMLDivElement>();
 
   useEffect(() => {
     const updateWidth = () => setWindowWidth(window.innerWidth);
@@ -46,7 +48,7 @@ const PdfFullscreen = ({ fileUrl }: PdfFullscreenProps) => {
       <DialogTrigger onClick={() => setIsOpen(true)} asChild>
         <Button
           variant="ghost"
-          className="gap-1.5 px-1.5 sm:px-2.5 h-8"
+          className="gap-1.5 px-1.5 sm:px-2.5 h-8 shrink-0"
           aria-label="fullscreen"
           title="Expand PDF view"
         >
@@ -54,14 +56,17 @@ const PdfFullscreen = ({ fileUrl }: PdfFullscreenProps) => {
         </Button>
       </DialogTrigger>
       <DialogContent className="w-[98vw] max-w-[98vw] sm:max-w-[95vw] xl:max-w-7xl h-[92dvh] sm:h-[92vh] p-2 sm:p-5 flex flex-col overflow-hidden gap-0">
-        <div className="shrink-0 flex items-center justify-between pb-2.5 border-b border-zinc-200 pr-8 gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0">
-              <FileText className="h-3.5 w-3.5 text-blue-600" />
+        <div
+          ref={toolbarRef}
+          className="shrink-0 flex items-center justify-between pb-2.5 border-b border-zinc-200 pr-9 gap-2 w-full min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain"
+        >
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium border border-blue-200 shrink-0 whitespace-nowrap">
+              <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
               <span>PDF Document</span>
             </div>
             {numPages && (
-              <span className="text-xs text-zinc-500 font-medium">
+              <span className="text-xs text-zinc-500 font-medium whitespace-nowrap shrink-0">
                 {numPages} {numPages === 1 ? "page" : "pages"}
               </span>
             )}
@@ -73,7 +78,7 @@ const PdfFullscreen = ({ fileUrl }: PdfFullscreenProps) => {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 sm:h-8 gap-1 text-xs px-2"
+                  className="h-7 sm:h-8 gap-1 text-xs px-2 shrink-0 whitespace-nowrap"
                 >
                   <Search className="h-3.5 w-3.5" />
                   {Math.round(scale * 100)}%

@@ -25,11 +25,13 @@ import {
   parseQuizData,
 } from "@/lib/interactive-content";
 import {
+  classifyChatIntent,
   computeExamMissingCounts,
   extractRequestedQuestionCounts,
   mergeAndFitExamCounts,
   mergeAndFitFlashcardCounts,
   mergeAndFitQuizCounts,
+  summarizeInteractiveHistoryContent,
 } from "@/lib/question-count";
 
 export const maxDuration = 60;
@@ -454,14 +456,23 @@ export async function POST(req: NextRequest) {
 
     const multilingualTutorRule = `- Multilingual Document Understanding & Any-Language Tutoring: Users may upload documents written in ANY language and ask you to teach, explain, translate, or summarize them in ANY language (for example: uploading a French, Arabic, Chinese, Spanish, or Yoruba document and asking to be taught in English, Yoruba, Hausa, Igbo, French, Spanish, Arabic, etc.). Always teach in the exact language the user writes in or requests, breaking down concepts clearly step-by-step like a patient private tutor while keeping key terms and citations accurate.`;
 
-    const mathAndPracticeRule = `- Mathematical & Statistical Rigor & Formatting:
+    const chatIntent = classifyChatIntent(message);
+    const isExamRequest = chatIntent === "exam";
+    const isPracticeRequest =
+      chatIntent === "exam" ||
+      chatIntent === "quiz" ||
+      chatIntent === "flashcards" ||
+      chatIntent === "grading";
+
+    const mathFormattingRule = `- Mathematical & Statistical Rigor & Formatting:
   * Format all mathematical and statistical formulas using standard LaTeX syntax:
     - Use inline math \`$ ... $\` for individual variables, metrics, symbols, and formulas (e.g., \`$H_0: \\mu = 0$\`, \`$\\sigma$\`, \`$\\bar{x}$\`, \`$p < 0.05$\`, \`$z = \\frac{\\bar{x} - \\mu_0}{\\sigma / \\sqrt{n}}$\`, \`$R^2 = 0.89$\`, \`$\\chi^2$\`).
     - Use display block math \`$$ ... $$\` on its own lines for standalone or complex equations.
   * For statistical results, summary statistics, frequency distributions, ANOVA tables, or regression outputs:
     - ALWAYS format tabular data cleanly in standard Markdown tables with column headers (e.g., \`| Variable | Mean | Std Dev | 95% CI | p-value |\`).
-    - When discussing hypothesis testing, clearly break down: (1) Null Hypothesis ($H_0$) & Alternative Hypothesis ($H_a$), (2) Test Statistic & degrees of freedom, (3) p-value / critical threshold, and (4) Plain-language conclusion grounded in the document context.
-- Interactive Questions & Practice Quizzes:
+    - When discussing hypothesis testing, clearly break down: (1) Null Hypothesis ($H_0$) & Alternative Hypothesis ($H_a$), (2) Test Statistic & degrees of freedom, (3) p-value / critical threshold, and (4) Plain-language conclusion grounded in the document context.`;
+
+    const quizFormatRule = `- Interactive Questions & Practice Quizzes:
   * When the user requests questions, practice tests, or quizzes (e.g. "quiz me", "test me", "give me questions on this", "practice questions"):
     - ALWAYS format the questions inside a \`\`\`quiz fenced code block in JSON format with a title, array of questions with 4 well-crafted options, correctIndex (0-based integer of correct option), and detailed explanation:
 \`\`\`quiz
@@ -479,8 +490,9 @@ export async function POST(req: NextRequest) {
 }
 \`\`\`
     - Vary \`correctIndex\` naturally across \`0\`, \`1\`, \`2\`, and \`3\` across questions (never place all correct answers at index \`0\`), craft plausible distractors targeting common misconceptions, and escape backslashes properly inside JSON strings (e.g. \`"$\\\\frac{a}{b}$"\`).
-    - The interactive UI will automatically render this as a multiple-choice practice quiz where the user picks options, submits for automated scoring, and gets answers with explanations and AI tutor review.
-- Interactive Study Flashcards:
+    - The interactive UI will automatically render this as a multiple-choice practice quiz where the user picks options, submits for automated scoring, and gets answers with explanations and AI tutor review.`;
+
+    const flashcardsFormatRule = `- Interactive Study Flashcards:
   * When the user requests flashcards or key terms to practice (e.g. "make flashcards", "create flashcards", "study cards"):
     - ALWAYS format the flashcards inside a \`\`\`flashcards fenced code block in JSON format:
 \`\`\`flashcards
@@ -496,13 +508,15 @@ export async function POST(req: NextRequest) {
   ]
 }
 \`\`\`
-    - The interactive UI will automatically render this as an active-recall flashcard deck where the user can type answers, check correctness, track score, flip for solutions, and request full AI grading.
-- Evaluating User Quiz & Flashcard Submissions:
+    - The interactive UI will automatically render this as an active-recall flashcard deck where the user can type answers, check correctness, track score, flip for solutions, and request full AI grading.`;
+
+    const gradingRule = `- Evaluating User Quiz & Flashcard Submissions:
   * When the user sends a \`QUIZ SUBMISSION\` or \`FLASHCARD SUBMISSION FOR AI GRADING & SOLUTIONS\` message containing their answers:
     - Grade every item accurately and fairly (for typed flashcard responses, accept equivalent phrasing, valid unit conversions, or mathematically equivalent forms).
     - Open with a clear **Final Score** (\`X / Y\` and percentage) and a structured breakdown showing each item's status (**Correct** vs **Incorrect / Needs Review**).
-    - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.
-- Standard Examination Papers (Word .DOCX default; PDF only if requested — ONE format at a time):
+    - Follow with **step-by-step solutions** for every item—especially items missed or skipped—showing the full calculation or reasoning in clean LaTeX and explaining why wrong choices/answers were incorrect.`;
+
+    const examFormatRule = `- Standard Examination Papers (Word .DOCX default; PDF only if requested — ONE format at a time):
   * Whenever the user requests formal/standard **exam questions**, an **examination paper**, **theory / essay questions**, specific counts of **multiple choice (MCQ) + theory** questions, **docx/pdf downloadable questions**, or a **separate solutions / marking scheme**:
     - ALWAYS output ONLY the examination inside a single \`\`\`exam fenced JSON block with ZERO introductory or trailing prose for fast streaming:
 \`\`\`exam
@@ -540,6 +554,22 @@ export async function POST(req: NextRequest) {
     - Always put ONLY ONE format in \`requestedFormats\`: \`["docx"]\` by default (Word document), or \`["pdf"]\` ONLY when the user explicitly requests PDF.
     - Strictly match the exact counts requested by the user (if user asks for 10 MCQs and 4 theory, generate ALL 10 in \`mcqQuestions\` and ALL 4 in \`theoryQuestions\`; if user asks only for theory, leave \`mcqQuestions: []\`; if user explicitly says no solutions, set \`includeSolutions: false\`).
     - Quill's UI renders the single requested format (**Word .docx** or **PDF**) formatted in **Times New Roman, 12pt font, 1.5 line spacing**.`;
+
+    const normalChatModeRule = `- Conversational Document Tutoring Mode:
+  * Respond directly in clear, helpful conversational Markdown (paragraphs, bullet points, Markdown tables, and LaTeX math where appropriate).
+  * Continue prior document discussions naturally when the user asks follow-ups (e.g., "continue", "explain more", explaining document concepts/theories/objectives/questions, or clarifying an item from a previous quiz/exam).
+  * Do NOT output \`\`\`exam, \`\`\`quiz, or \`\`\`flashcards JSON code blocks unless the user explicitly asks to generate a new interactive quiz, flashcards, or examination paper.`;
+
+    const mathAndPracticeRule =
+      chatIntent === "exam"
+        ? `${mathFormattingRule}\n${examFormatRule}`
+        : chatIntent === "quiz"
+          ? `${mathFormattingRule}\n${quizFormatRule}`
+          : chatIntent === "flashcards"
+            ? `${mathFormattingRule}\n${flashcardsFormatRule}`
+            : chatIntent === "grading"
+              ? `${mathFormattingRule}\n${gradingRule}`
+              : `${mathFormattingRule}\n${normalChatModeRule}`;
 
     const systemPrompt = isMultiDoc
       ? `You are Quill, an expert multilingual AI document tutor and research assistant operating in Multi-Document Synthesis mode (${isPro ? "PRO Tier" : "Standard Tier"
@@ -591,20 +621,6 @@ ${mathAndPracticeRule}
 ${singlePageConstraint}
 - Other Documents Awareness: If the user asks about an unloaded library document listed above, mention it by exact name and let them know they can reference it directly or tap "Add Docs" for Multi-Doc Chat.`;
 
-    const isExamRequest =
-      /\b(exam|examination|theory|essay|subjective|objective|obj|past questions?|test paper|mock\s+(?:exam|test)|midterm|marking scheme|marking guide|times new roman|section\s+a\b.*section\s+b|written\s+questions?|long[- ]answer)\b/i.test(
-        message
-      ) ||
-      (/\b(questions?|quiz|test)\b/i.test(message) &&
-        /\b(docx|word\s*(?:doc|document|file)|pdf|separate\s+solutions?|separate\s+answers?|1\.5\s*(?:line)?\s*spacing|font\s*12|12\s*pt)\b/i.test(
-          message
-        ));
-    const isPracticeRequest =
-      isExamRequest ||
-      /\b(quiz|test me|questions?|mcq|flashcards?|study cards|quiz submission|flashcard submission)\b/i.test(
-        message
-      );
-
     // Always default to Word (.docx) ONLY, unless PDF is explicitly requested (one format at a time)
     const wantsPdfExam =
       /\bpdf\b/i.test(message) &&
@@ -625,6 +641,12 @@ ${singlePageConstraint}
     const dynamicPracticeMaxTokens = Math.min(
       isPro ? 4400 : 3800,
       Math.max(1600, 400 + estMcqCount * 135 + estTheoryCount * 240)
+    );
+
+    const hasInteractiveHistory = formattedPrevMessages.some(
+      (m) =>
+        m.role === "assistant" &&
+        /```(?:exam|quiz|flashcards)/i.test(m.content)
     );
 
     let countTurnHint = "";
@@ -673,6 +695,8 @@ ${singlePageConstraint}
           ? " Keep each question, options, and explanation brief (1 short sentence) so all items finish cleanly."
           : " Keep each item crisp and complete.";
       countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}".${conciseQuizNote}]`;
+    } else if (chatIntent === "chat" && hasInteractiveHistory) {
+      countTurnHint = `\n\n[RESPONSE MODE: Respond directly to the user's document question in clear conversational Markdown grounded in the document context. Do NOT output JSON or \`\`\`exam / \`\`\`quiz / \`\`\`flashcards code blocks.]`;
     }
 
     const promptMessages =
@@ -687,7 +711,15 @@ ${singlePageConstraint}
                 }
               : m
           )
-        : formattedPrevMessages;
+        : formattedPrevMessages.map((m) =>
+            m.role === "assistant" &&
+            /```(?:exam|quiz|flashcards)/i.test(m.content)
+              ? {
+                  ...m,
+                  content: summarizeInteractiveHistoryContent(m.content),
+                }
+              : m
+          );
 
     const messages = [
       {

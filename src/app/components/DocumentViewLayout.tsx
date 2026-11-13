@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
+import { useHorizontalWheelScroll } from "@/lib/use-horizontal-wheel-scroll";
 import { dispatchPageJump } from "@/lib/page-jump";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +51,7 @@ export default function DocumentViewLayout({
 
   const { isMobile, isKeyboardVisible, viewportHeight, offsetTop } =
     useMobileViewport();
+  const chatHeaderRef = useHorizontalWheelScroll<HTMLDivElement>();
 
   // Reveal viewer when jumping to a citation page/slide (closes mobile modal & desktop expanded chat)
   useEffect(() => {
@@ -189,7 +191,7 @@ export default function DocumentViewLayout({
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-clip">
+          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 min-w-0 w-full max-w-full overflow-x-clip">
             <DocumentRenderer fileId={fileId} url={url} fileName={fileName} />
           </div>
         </div>
@@ -252,8 +254,11 @@ export default function DocumentViewLayout({
           </div>
 
           {/* Quill AI Assistant Header Bar */}
-          <div className="flex items-center justify-between px-3.5 py-2 bg-white border-b border-zinc-200 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
+          <div
+            ref={chatHeaderRef}
+            className="flex items-center justify-between gap-2 px-3.5 py-2 bg-white border-b border-zinc-200 shrink-0 min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain"
+          >
+            <div className="flex items-center gap-2 shrink-0">
               <div className="h-2 w-2 rounded-full bg-blue-600 animate-pulse shrink-0" />
               <span className="text-xs font-semibold text-zinc-900 truncate">
                 QuillDocs AI

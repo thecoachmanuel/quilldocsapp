@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useMobileViewport } from "@/lib/use-mobile-viewport";
+import { useHorizontalWheelScroll } from "@/lib/use-horizontal-wheel-scroll";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -86,6 +87,8 @@ export default function MultiDocumentViewLayout({
 
   const { isMobile, isKeyboardVisible, viewportHeight, offsetTop } =
     useMobileViewport();
+  const tabsToolbarRef = useHorizontalWheelScroll<HTMLDivElement>();
+  const chatHeaderRef = useHorizontalWheelScroll<HTMLDivElement>();
 
   // On mobile when typing with virtual keypad, pin chat directly to visual viewport
   const mobileKeyboardStyle: React.CSSProperties | undefined =
@@ -291,9 +294,12 @@ export default function MultiDocumentViewLayout({
     <div className="relative flex flex-col justify-start w-full max-w-full overflow-x-clip lg:flex-1 lg:h-[calc(100dvh-3.5rem)] lg:overflow-hidden">
       {/* Top Document Tab Navigation Bar */}
       <div className="bg-white/95 backdrop-blur border-b border-zinc-200 shrink-0 z-30 px-3 sm:px-6 py-1.5 w-full max-w-full overflow-x-clip">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 min-w-0">
           {/* Document Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+          <div
+            ref={tabsToolbarRef}
+            className="flex items-center gap-1.5 overflow-x-auto no-scrollbar overscroll-x-contain py-0.5 min-w-0 flex-1 max-w-full"
+          >
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400 mr-1 shrink-0">
               <Layers className="h-3 w-3 text-blue-600" />
               Sources ({selectedFiles.length}):
@@ -383,7 +389,7 @@ export default function MultiDocumentViewLayout({
             isChatExpanded && !isDesktopChatHidden && "lg:hidden"
           )}
         >
-          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 w-full max-w-full overflow-x-clip">
+          <div className="p-0 sm:px-3 sm:py-1.5 lg:pl-6 lg:pr-4 lg:py-2 xl:flex-1 xl:pl-6 min-w-0 w-full max-w-full overflow-x-clip">
             {activeFile ? (
               <DocumentRenderer
                 key={activeFile.id}
@@ -455,8 +461,11 @@ export default function MultiDocumentViewLayout({
           </div>
 
           {/* Multi-Doc Chat Top Bar */}
-          <div className="flex items-center justify-between px-3.5 py-2 bg-white border-b border-zinc-200 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
+          <div
+            ref={chatHeaderRef}
+            className="flex items-center justify-between gap-2 px-3.5 py-2 bg-white border-b border-zinc-200 shrink-0 min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain"
+          >
+            <div className="flex items-center gap-2 shrink-0">
               <div className="h-2 w-2 rounded-full bg-blue-600 animate-pulse shrink-0" />
               <span className="text-xs font-bold text-zinc-900 truncate">
                 Multi-Doc Synthesis

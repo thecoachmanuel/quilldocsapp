@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import PdfFullscreen from "./PdfFullScreen";
 import { clearPendingPageJump, consumePendingPageJump } from "@/lib/page-jump";
+import { useHorizontalWheelScroll } from "@/lib/use-horizontal-wheel-scroll";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.js`;
 
@@ -77,6 +78,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
   const [renderMode, setRenderMode] = useState<"page" | "reader">("page");
   const [readerParagraphs, setReaderParagraphs] = useState<string[]>([]);
   const [isReaderLoading, setIsReaderLoading] = useState<boolean>(false);
+  const toolbarRef = useHorizontalWheelScroll<HTMLDivElement>();
 
   const CustomPageValidator = z.object({
     page: z
@@ -281,7 +283,10 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
 
   return (
     <div className="w-full max-w-full bg-white rounded-none sm:rounded-md shadow flex flex-col items-center overflow-x-hidden">
-      <div className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1 overflow-x-auto no-scrollbar">
+      <div
+        ref={toolbarRef}
+        className="min-h-[2.75rem] h-auto py-0.5 sm:h-14 sm:py-0 w-full min-w-0 border-b border-zinc-200 flex items-center justify-between px-1.5 sm:px-2 gap-1.5 overflow-x-auto no-scrollbar overscroll-x-contain"
+      >
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <Button
             disabled={currPage <= 1}
@@ -291,17 +296,17 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
             }}
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 shrink-0"
             aria-label="previous page"
           >
             <ChevronDown className="h-4 w-4" />
           </Button>
 
-          <div className="flex items-center gap-1 sm:gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <Input
               {...register("page")}
               className={cn(
-                "w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm",
+                "w-9 sm:w-12 h-7 sm:h-8 text-center px-0.5 text-xs sm:text-sm shrink-0",
                 errors.page && "focus-visible:ring-red-500"
               )}
               onKeyDown={(e) => {
@@ -310,7 +315,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 }
               }}
             />
-            <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5 sm:space-x-1">
+            <p className="text-zinc-700 text-xs sm:text-sm space-x-0.5 sm:space-x-1 whitespace-nowrap shrink-0">
               <span>/</span>
               <span>{numPages ?? "x"}</span>
             </p>
@@ -326,7 +331,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
             }}
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 shrink-0"
             aria-label="next page"
           >
             <ChevronUp className="h-4 w-4" />
@@ -339,7 +344,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 type="button"
                 onClick={() => setRenderMode("page")}
                 className={cn(
-                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs",
+                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs whitespace-nowrap shrink-0",
                   renderMode === "page"
                     ? "bg-white text-zinc-900 font-semibold shadow-sm"
                     : "text-zinc-600 hover:text-zinc-900"
@@ -353,7 +358,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
                 type="button"
                 onClick={() => setRenderMode("reader")}
                 className={cn(
-                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs",
+                  "px-1.5 sm:px-2 py-0.5 sm:py-1 rounded flex items-center gap-1 transition-all text-xs whitespace-nowrap shrink-0",
                   renderMode === "reader"
                     ? "bg-white text-zinc-900 font-semibold shadow-sm"
                     : "text-zinc-600 hover:text-zinc-900"
@@ -366,7 +371,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
           )}
         </div>
 
-        <div className="space-x-0.5 sm:space-x-1.5 flex items-center shrink-0">
+        <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
           {/* In-Document Keyword Search (Ctrl+F) */}
           {isSearchOpen ? (
             <div className="flex items-center gap-1 bg-zinc-100 p-0.5 sm:p-1 rounded-md border border-zinc-300 shrink-0">
@@ -431,7 +436,7 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
           ) : (
             <Button
               variant="ghost"
-              className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm text-zinc-600 hover:text-zinc-900"
+              className="gap-1 px-1.5 sm:px-2.5 h-8 text-xs sm:text-sm text-zinc-600 hover:text-zinc-900 shrink-0 whitespace-nowrap"
               onClick={() => {
                 setIsSearchOpen(true);
                 setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -439,17 +444,17 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
               title="Find text in document (Ctrl+F)"
               aria-label="Find in document"
             >
-              <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
               <span className="hidden lg:inline text-xs">Find</span>
             </Button>
           )}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm" aria-label="zoom" variant="ghost">
-                <ZoomIn className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <Button className="gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 h-7 sm:h-8 text-xs sm:text-sm shrink-0 whitespace-nowrap" aria-label="zoom" variant="ghost">
+                <ZoomIn className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 {scale * 100}%
-                <ChevronDown className="h-3 w-3 opacity-50" />
+                <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -479,10 +484,11 @@ const PdfRenderer = ({ url, fileId }: PdfRendererProps) => {
               setRotation((prev) => (prev >= 270 ? 0 : prev + 90));
             }}
             variant="ghost"
-            className="hidden sm:inline-flex px-1.5 sm:px-2.5 h-8"
+            className="inline-flex shrink-0 px-1.5 sm:px-2.5 h-8"
             aria-label="rotate 90 degrees"
+            title="Rotate 90°"
           >
-            <RotateCw className="h-4 w-4" />
+            <RotateCw className="h-4 w-4 shrink-0" />
           </Button>
 
           <PdfFullscreen fileUrl={url} />

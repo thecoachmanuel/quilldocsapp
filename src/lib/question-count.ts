@@ -8,6 +8,8 @@ import {
   QuizQuestion,
 } from "./interactive-content";
 
+export type ChatTurnIntent = "exam" | "quiz" | "flashcards" | "grading" | "chat";
+
 export interface RequestedQuestionCounts {
   kind: "exam" | "quiz" | "flashcards";
   mcqCount: number | null;
@@ -82,6 +84,173 @@ function clampCount(n: number, max: number): number {
 }
 
 /**
+ * Classifies whether the user message is requesting interactive exam, quiz, or
+ * flashcard generation, grading a submission, or normal conversational chat.
+ * Prevents conceptual keywords ("theory", "objective", "essay", "question 2")
+ * in normal document queries from hijacking normal chat into JSON generation.
+ */
+export function classifyChatIntent(message: string): ChatTurnIntent {
+  const text = (message || "").trim();
+  if (!text) return "chat";
+
+  if (/\b(?:QUIZ SUBMISSION|FLASHCARD SUBMISSION FOR AI GRADING)\b/i.test(text)) {
+    return "grading";
+  }
+
+  const hasGenerationVerb =
+    /\b(?:generate|create|make|build|prepare|draft|compile|produce|design|set|give\s+me|give\s+us|provide(?:\s+me|\s+us)?(?:\s+with)?|write(?:\s+me)?|send(?:\s+me)?|ask\s+me|output|export|download|print)\b/i.test(
+      text
+    );
+
+  // User asking AI to answer/solve/explain existing questions or content in the document
+  const asksToAnswerOrExplainExisting =
+    /\b(?:answers?|solutions?|explanations?|summary|summaries|meanings?|definitions?)\s+(?:to|for|of)\s+(?:all\s+|the\s+|these\s+|those\s+|my\s+)?(?:\d+\s+)?(?:review\s+|study\s+|practice\s+)?(?:questions?|qs?|exam|quiz|test|flashcards?|essay|theory|objectives?)\b/i.test(
+      text
+    ) ||
+    /\b(?:answer|solve|explain|summarize|summarise|describe|define|clarify|discuss|compare|contrast|analyze|analyse|outline|interpret|translate|continue(?:\s+explaining)?)\s+(?:all\s+|the\s+|these\s+|those\s+|this\s+)?(?:\d+\s+)?(?:past\s+|theory\s+|essay\s+|objective\s+|mcq\s+|review\s+|study\s+|chapter\s+)?(?:questions?\s*(?:\d|#)|questions?\b(?!\s+(?:for\s+me|on\s+this|about\s+this|to\s+test))|theory|theories|essay|essays|objectives?|flashcards?|quiz|exam)\b/i.test(
+      text
+    );
+
+  const hasFlashcardTerm = /\b(?:flashcards?|study\s+cards?)\b/i.test(text);
+  const hasFlashcardCount = new RegExp(
+    `\\b(?:${NUM_TOKEN_PATTERN})\\s+(?:study\\s+)?(?:flashcards?|cards?)\\b|\\b(?:flashcards?|cards?)\\s*[:\\-=]\\s*(?:${NUM_TOKEN_PATTERN})\\b`,
+    "i"
+  ).test(text);
+
+  // Explicit exam formatting/structure signals (e.g. ExamBuilderModal or explicit exam paper requests)
+  const hasExplicitExamSpec =
+    /\b(?:examination\s+paper|test\s+paper|mock\s+(?:exam|test)|marking\s+(?:scheme|guide)|times\s+new\s+roman|1\.5\s*(?:line)?\s*spacing|font\s*12|12\s*pt|separate\s+(?:solutions|answers)|(?:mcq|mcqs|multiple[- ]choice)\b[\s\S]*\b(?:theory|essay|subjective|written)|(?:theory|essay|subjective|written)\b[\s\S]*\b(?:mcq|mcqs|multiple[- ]choice)|obj\s*(?:and|&|\+)\s*theory|theory\s*(?:and|&|\+)\s*obj)\b/i.test(
+      text
+    ) ||
+    new RegExp(
+      `\\b(?:${NUM_TOKEN_PATTERN})\\s+(?:of\\s+)?(?:theory|essay|subjective|objective|obj)(?:\\s+questions?)?\\b|\\b(?:only|just)\\s+(?:theory|essay|objective|obj)\\b`,
+      "i"
+    ).test(text);
+
+  const hasExplicitExamQuestionNoun =
+    /\b(?:past\s+questions?|exam(?:ination)?\s+questions?|written\s+questions?|long[- ]answer\s+questions?|(?:theory|essay|subjective|objective|obj)\s+questions?)\b/i.test(
+      text
+    );
+
+  const hasExamWord = /\b(?:exam|examination|midterm)\b/i.test(text);
+  const hasExportableFormatWithQuestions =
+    /\b(?:questions?|quiz|test)\b/i.test(text) &&
+    /\b(?:docx|word\s*(?:doc|document|file)|(?:as|to|in|into|export|download)\s+pdf|pdf\s+(?:format|version|file|export|paper))\b/i.test(
+      text
+    ) &&
+    !asksToAnswerOrExplainExisting;
+
+  if (
+    hasExplicitExamSpec ||
+    hasExportableFormatWithQuestions ||
+    (hasExplicitExamQuestionNoun && (hasGenerationVerb || !asksToAnswerOrExplainExisting)) ||
+    (hasExamWord &&
+      !hasFlashcardTerm &&
+      (hasGenerationVerb ||
+        /\b(?:exam|examination|midterm)\s+(?:on|for|from|covering)\b/i.test(text) ||
+        /^\s*(?:an?\s+)?(?:mock\s+)?(?:exam|examination|midterm)\b/i.test(text)) &&
+      !asksToAnswerOrExplainExisting)
+  ) {
+    return "exam";
+  }
+
+  if (
+    hasFlashcardTerm &&
+    (hasGenerationVerb ||
+      hasFlashcardCount ||
+      (!asksToAnswerOrExplainExisting &&
+        /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:create|make|generate|give|build|do)?\s*(?:me\s+|us\s+)?(?:some\s+)?(?:flashcards?|study\s+cards?)\b/i.test(
+          text
+        )))
+  ) {
+    return "flashcards";
+  }
+
+  const hasDirectQuizPhrase =
+    /\b(?:quiz\s+me|test\s+me|practice\s+quiz|practice\s+test|practice\s+questions?)\b/i.test(
+      text
+    );
+  const hasQuizCount = new RegExp(
+    `\\b(?:${NUM_TOKEN_PATTERN})(?:[-\\s]+)?(?:quiz|practice|multiple[- ]choice|mcqs?|objectives?|test)?\\s*(?:questions?|mcqs?)\\b|\\b(?:quiz|mcqs?|questions?)\\s*[:\\-=]\\s*(?:${NUM_TOKEN_PATTERN})\\b`,
+    "i"
+  ).test(text);
+  const hasQuestionTarget =
+    /\b(?:quiz|mcqs?|multiple[- ]choice|questions?)\b/i.test(text);
+
+  if (
+    hasDirectQuizPhrase ||
+    ((hasGenerationVerb || hasQuizCount) &&
+      hasQuestionTarget &&
+      !asksToAnswerOrExplainExisting &&
+      !/\b(?:the\s+\d+\s+questions?\s+(?:in|on|from)\s+(?:the|this|my)\s+(?:doc|document|pdf|page|chapter|section))\b/i.test(
+        text
+      ))
+  ) {
+    return "quiz";
+  }
+
+  return "chat";
+}
+
+/**
+ * Converts a previous assistant interactive JSON block (```exam / ```quiz / ```flashcards)
+ * into a concise plain-text summary for follow-up normal chat turns so the model remembers
+ * what was generated without getting locked into outputting JSON fences again.
+ */
+export function summarizeInteractiveHistoryContent(content: string): string {
+  const fenceRegex = /```(exam|quiz|flashcards)\s*([\s\S]*?)```/gi;
+  if (!fenceRegex.test(content)) return content;
+
+  return content
+    .replace(/```(exam|quiz|flashcards)\s*([\s\S]*?)```/gi, (_m, kindRaw, body) => {
+      const kind = String(kindRaw || "interactive").toLowerCase();
+      try {
+        const parsed = JSON.parse(String(body).trim());
+        const title =
+          typeof parsed?.title === "string" && parsed.title.trim()
+            ? parsed.title.trim()
+            : kind;
+        const lines: string[] = [];
+
+        if (Array.isArray(parsed?.mcqQuestions)) {
+          parsed.mcqQuestions.slice(0, 10).forEach((q: any, i: number) => {
+            if (typeof q?.question === "string") {
+              lines.push(`MCQ ${i + 1}: ${q.question.trim().slice(0, 140)}`);
+            }
+          });
+        }
+        if (Array.isArray(parsed?.theoryQuestions)) {
+          parsed.theoryQuestions.slice(0, 6).forEach((q: any, i: number) => {
+            if (typeof q?.question === "string") {
+              lines.push(`Theory ${i + 1}: ${q.question.trim().slice(0, 140)}`);
+            }
+          });
+        }
+        if (Array.isArray(parsed?.questions)) {
+          parsed.questions.slice(0, 10).forEach((q: any, i: number) => {
+            if (typeof q?.question === "string") {
+              lines.push(`Q${i + 1}: ${q.question.trim().slice(0, 140)}`);
+            }
+          });
+        }
+        if (Array.isArray(parsed?.cards)) {
+          parsed.cards.slice(0, 10).forEach((c: any, i: number) => {
+            if (typeof c?.front === "string") {
+              lines.push(`Card ${i + 1}: ${c.front.trim().slice(0, 120)}`);
+            }
+          });
+        }
+
+        const detail = lines.length > 0 ? ` — Items: ${lines.join(" | ")}` : "";
+        return `[Previously generated ${kind}: "${title}"${detail}]`.slice(0, 1200);
+      } catch {
+        return `[Previously generated interactive ${kind} omitted]`;
+      }
+    })
+    .trim();
+}
+
+/**
  * Extracts explicit requested counts for Exams (MCQ + Theory), Quizzes, or Flashcards
  * from natural-language user prompts and ExamBuilderModal instructions.
  */
@@ -92,24 +261,14 @@ export function extractRequestedQuestionCounts(
   const text = (message || "").trim();
   if (!text) return null;
 
-  const isGradingSubmission =
-    /\b(?:QUIZ SUBMISSION|FLASHCARD SUBMISSION FOR AI GRADING)\b/i.test(text);
-  if (isGradingSubmission) return null;
+  const intent = options?.isExamRequest ? "exam" : classifyChatIntent(text);
+  if (intent === "chat" || intent === "grading") {
+    return null;
+  }
 
-  const isFlashcards =
-    !options?.isExamRequest &&
-    /\b(?:flashcards?|study\s+cards?)\b/i.test(text);
-  const isExam =
-    Boolean(options?.isExamRequest) ||
-    /\b(?:exam|examination|theory|essay|subjective|objective|obj|past\s+questions?|test\s+paper|mock\s+(?:exam|test)|midterm|marking\s+(?:scheme|guide))\b/i.test(
-      text
-    );
-  const isQuiz =
-    !isExam &&
-    !isFlashcards &&
-    /\b(?:quiz|practice\s+questions?|practice\s+test|test\s+me|questions?|mcqs?|multiple[- ]choice)\b/i.test(
-      text
-    );
+  const isFlashcards = intent === "flashcards";
+  const isExam = intent === "exam";
+  const isQuiz = intent === "quiz";
 
   if (!isExam && !isFlashcards && !isQuiz) {
     return null;

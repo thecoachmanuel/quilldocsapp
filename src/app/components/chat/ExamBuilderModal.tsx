@@ -33,8 +33,8 @@ export const ExamBuilderModal: React.FC<ExamBuilderModalProps> = ({
   const [duration, setDuration] = useState<string>("2 Hours");
   const [notes, setNotes] = useState<string>("");
 
-  const safeMcq = Math.max(0, Math.min(30, Number(mcqCount) || 0));
-  const safeTheory = Math.max(0, Math.min(15, Number(theoryCount) || 0));
+  const safeMcq = Math.max(0, Math.min(50, Number(mcqCount) || 0));
+  const safeTheory = Math.max(0, Math.min(25, Number(theoryCount) || 0));
   const canGenerate = (safeMcq > 0 || safeTheory > 0) && !isLoading;
 
   const handleGenerate = (e: React.FormEvent) => {
@@ -154,7 +154,7 @@ export const ExamBuilderModal: React.FC<ExamBuilderModalProps> = ({
                   id="mcq-count-input"
                   type="number"
                   min={0}
-                  max={30}
+                  max={50}
                   value={mcqCount}
                   onChange={(e) => setMcqCount(Number(e.target.value))}
                   className="w-14 rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm font-semibold text-center text-gray-900 focus:border-blue-600 focus:outline-none"
@@ -191,7 +191,7 @@ export const ExamBuilderModal: React.FC<ExamBuilderModalProps> = ({
                   id="theory-count-input"
                   type="number"
                   min={0}
-                  max={15}
+                  max={25}
                   value={theoryCount}
                   onChange={(e) => setTheoryCount(Number(e.target.value))}
                   className="w-14 rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm font-semibold text-center text-gray-900 focus:border-blue-600 focus:outline-none"

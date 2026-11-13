@@ -984,7 +984,7 @@ export async function createCompletionWithFallback({
       models: freeCandidates,
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 3200),
+      maxTokens: Math.min(max_tokens, 5000),
       compactContextChars: 20000,
       compactHistoryTurns: 6,
     });
@@ -1003,7 +1003,7 @@ export async function createCompletionWithFallback({
       models: GEMINI_FREE_MODELS,
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 3600),
+      maxTokens: Math.min(max_tokens, 6000),
       compactContextChars: 36000,
       compactHistoryTurns: 8,
     });
@@ -1025,7 +1025,7 @@ export async function createCompletionWithFallback({
       models: ["gpt-4o-mini", "gpt-3.5-turbo"],
       messages,
       temperature,
-      maxTokens: Math.min(max_tokens, 3200),
+      maxTokens: Math.min(max_tokens, 5500),
       compactContextChars: 24000,
       compactHistoryTurns: 6,
     });

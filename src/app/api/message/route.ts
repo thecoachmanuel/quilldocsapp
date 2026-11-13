@@ -19,8 +19,40 @@ import {
 } from "@/lib/multi-doc";
 import { NextRequest } from "next/server";
 import { OpenAIStream, StreamingTextResponse } from "ai";
+import {
+  parseExamData,
+  parseFlashcardsData,
+  parseQuizData,
+} from "@/lib/interactive-content";
+import {
+  computeExamMissingCounts,
+  extractRequestedQuestionCounts,
+  mergeAndFitExamCounts,
+  mergeAndFitFlashcardCounts,
+  mergeAndFitQuizCounts,
+} from "@/lib/question-count";
 
 export const maxDuration = 60;
+
+async function readStreamToString(
+  aiResponse: any,
+  onTextChunk?: (accumulated: string) => void
+): Promise<string> {
+  const raw = OpenAIStream(aiResponse);
+  const reader = raw.getReader();
+  const decoder = new TextDecoder();
+  let acc = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) {
+      acc += decoder.decode(value, { stream: true });
+      onTextChunk?.(acc);
+    }
+  }
+  acc += decoder.decode();
+  return acc;
+}
 
 interface PerDocContextResult {
   file: any;
@@ -579,37 +611,69 @@ ${singlePageConstraint}
       !/\b(docx|word\s*(?:doc|document|file))\b/i.test(message);
     const requestedExamFormat: "docx" | "pdf" = wantsPdfExam ? "pdf" : "docx";
 
-    const requestedMcqMatch = message.match(
-      /(\d+)\s*(?:multiple[- ]choice|mcqs?|objectives?|obj)\b/i
-    );
-    const requestedTheoryMatch = message.match(
-      /(\d+)\s*(?:theory|essay|structured|long[- ]answer)\b/i
-    );
-    const estMcqCount = requestedMcqMatch
-      ? Math.min(30, parseInt(requestedMcqMatch[1], 10))
-      : 10;
-    const estTheoryCount = requestedTheoryMatch
-      ? Math.min(15, parseInt(requestedTheoryMatch[1], 10))
-      : 4;
-    const examMaxTokens = Math.min(
-      isPro ? 3600 : 3000,
-      Math.max(1800, 450 + estMcqCount * 100 + estTheoryCount * 200)
+    const requestedCounts = extractRequestedQuestionCounts(message, {
+      isExamRequest,
+    });
+
+    const estMcqCount = isExamRequest
+      ? (requestedCounts?.mcqCount ?? requestedCounts?.totalCount ?? 10)
+      : (requestedCounts?.totalCount ?? 5);
+    const estTheoryCount = isExamRequest
+      ? (requestedCounts?.theoryCount ?? 0)
+      : 0;
+
+    const dynamicPracticeMaxTokens = Math.min(
+      isPro ? 5800 : 5000,
+      Math.max(1800, 450 + estMcqCount * 115 + estTheoryCount * 220)
     );
 
-    const examTurnHint = isExamRequest
-      ? `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". Keep question stems, options, and solution notes crisp and concise for fast streaming. Default to 10 MCQ + 4 Theory only if counts were omitted.]`
-      : "";
+    let countTurnHint = "";
+    if (isExamRequest) {
+      const exactMcqLine =
+        requestedCounts?.mcqCount !== null &&
+        requestedCounts?.mcqCount !== undefined
+          ? `"mcqQuestions": EXACTLY ${requestedCounts.mcqCount} item(s)${
+              requestedCounts.mcqCount === 0 ? " (empty array [])" : ""
+            }`
+          : requestedCounts?.totalCount
+            ? `total questions across mcqQuestions + theoryQuestions = EXACTLY ${requestedCounts.totalCount}`
+            : `"mcqQuestions": 10 items`;
 
-    const promptMessages = isExamRequest
-      ? formattedPrevMessages.slice(-4).map((m) =>
-          m.role === "assistant" && /```(?:exam|quiz|flashcards)/i.test(m.content)
-            ? {
-                ...m,
-                content: "[Previous generated interactive exercise omitted for speed]",
-              }
-            : m
-        )
-      : formattedPrevMessages;
+      const exactTheoryLine =
+        requestedCounts?.theoryCount !== null &&
+        requestedCounts?.theoryCount !== undefined
+          ? `"theoryQuestions": EXACTLY ${requestedCounts.theoryCount} item(s)${
+              requestedCounts.theoryCount === 0 ? " (empty array [])" : ""
+            }`
+          : requestedCounts?.totalCount
+            ? ""
+            : `"theoryQuestions": 4 items`;
+
+      countTurnHint = `\n\n[FAST EXAM GENERATION RULE: Generate ONE examination paper strictly from the document context. Output ONLY a single valid \`\`\`exam JSON fenced block with ZERO prose before or after it. Required fields: "title", "duration", "instructions", "includeSolutions" (true unless user explicitly asked for no solutions), "requestedFormats": ["${requestedExamFormat}"] (ONLY ONE format), "mcqQuestions" (4 options each), and "theoryQuestions". STRICT EXACT COUNT REQUIREMENT: ${[exactMcqLine, exactTheoryLine].filter(Boolean).join("; ")}. Write EVERY SINGLE question in full—never abbreviate or skip items. Keep question stems, options, and solutions crisp and concise.]`;
+    } else if (
+      requestedCounts?.hasExplicitCount &&
+      requestedCounts.totalCount
+    ) {
+      const fence =
+        requestedCounts.kind === "flashcards" ? "flashcards" : "quiz";
+      const arrName =
+        requestedCounts.kind === "flashcards" ? "cards" : "questions";
+      countTurnHint = `\n\n[STRICT EXACT COUNT REQUIREMENT: Output a single valid \`\`\`${fence} JSON fenced block containing EXACTLY ${requestedCounts.totalCount} unique items in "${arrName}". Write all ${requestedCounts.totalCount} items completely—never stop early or abbreviate.]`;
+    }
+
+    const promptMessages =
+      isExamRequest || requestedCounts?.hasExplicitCount
+        ? formattedPrevMessages.slice(-4).map((m) =>
+            m.role === "assistant" &&
+            /```(?:exam|quiz|flashcards)/i.test(m.content)
+              ? {
+                  ...m,
+                  content:
+                    "[Previous generated interactive exercise omitted for speed]",
+                }
+              : m
+          )
+        : formattedPrevMessages;
 
     const messages = [
       {
@@ -619,19 +683,16 @@ ${singlePageConstraint}
       ...promptMessages,
       {
         role: "user" as const,
-        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\nUSER QUESTION: ${message}${examTurnHint}`,
+        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\nUSER QUESTION: ${message}${countTurnHint}`,
       },
     ];
 
     const { response, activeModel } = await createCompletionWithFallback({
       messages,
       temperature: isPro ? 0.15 : 0.2,
-      max_tokens: isExamRequest
-        ? examMaxTokens
-        : isPracticeRequest
-          ? isPro
-            ? 2800
-            : 2000
+      max_tokens:
+        isExamRequest || isPracticeRequest
+          ? dynamicPracticeMaxTokens
           : isPro
             ? 1800
             : 1100,
@@ -647,6 +708,274 @@ ${singlePageConstraint}
           .map((res, idx) => `[${idx + 1}] ${res.file.name}`)
           .join(" | ")}`
       : "";
+
+    // When explicit question/card counts were requested, verify exact count & auto-fill missing items
+    if (requestedCounts?.hasExplicitCount) {
+      const encoder = new TextEncoder();
+      const verifiedStream = new ReadableStream({
+        async start(controller) {
+          let openedFence = false;
+          let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+          const stopKeepalive = () => {
+            if (keepaliveTimer) {
+              clearInterval(keepaliveTimer);
+              keepaliveTimer = null;
+            }
+          };
+
+          const ensureOpenedFence = () => {
+            if (openedFence) return;
+            openedFence = true;
+            controller.enqueue(
+              encoder.encode(`\`\`\`${requestedCounts.kind}\n`)
+            );
+            keepaliveTimer = setInterval(() => {
+              try {
+                if (openedFence) {
+                  controller.enqueue(encoder.encode(" "));
+                }
+              } catch {
+                stopKeepalive();
+              }
+            }, 2500);
+          };
+
+          try {
+            const pass1Raw = await readStreamToString(response, (acc) => {
+              if (!openedFence && /^\s*(?:```|\{)/i.test(acc)) {
+                ensureOpenedFence();
+              }
+            });
+
+            let finalPayload = pass1Raw;
+
+            if (requestedCounts.kind === "exam") {
+              let examData = parseExamData(pass1Raw);
+              if (examData) {
+                ensureOpenedFence();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                  const { missingMcq, missingTheory } = computeExamMissingCounts(
+                    examData,
+                    requestedCounts
+                  );
+                  if (missingMcq === 0 && missingTheory === 0) break;
+
+                  const existingStems = [
+                    ...examData.mcqQuestions.map((q) =>
+                      q.question.slice(0, 65)
+                    ),
+                    ...examData.theoryQuestions.map((q) =>
+                      q.question.slice(0, 65)
+                    ),
+                  ]
+                    .slice(-20)
+                    .join(" | ");
+
+                  const topUpPrompt = `Continue generating ONLY the remaining unique exam questions strictly grounded in the document context.
+Need EXACTLY ${missingMcq} more "mcqQuestions" (4 options A-D each) and EXACTLY ${missingTheory} more "theoryQuestions".
+Do NOT repeat these already-generated questions: [${existingStems}].
+Return ONLY valid JSON inside \`\`\`exam { "requestedFormats": ["${requestedExamFormat}"], "mcqQuestions": [...], "theoryQuestions": [...] } \`\`\` with ZERO prose.`;
+
+                  const topUpRes = await createCompletionWithFallback({
+                    messages: [
+                      { role: "system" as const, content: systemPrompt },
+                      {
+                        role: "user" as const,
+                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
+                      },
+                    ],
+                    temperature: 0.2,
+                    max_tokens: Math.min(
+                      4500,
+                      Math.max(900, 350 + missingMcq * 115 + missingTheory * 220)
+                    ),
+                  }).catch(() => null);
+
+                  if (!topUpRes) break;
+                  const extraRaw = await readStreamToString(topUpRes.response);
+                  const extraExam = parseExamData(extraRaw);
+                  if (!extraExam) break;
+                  examData = mergeAndFitExamCounts(
+                    examData,
+                    extraExam,
+                    requestedCounts.mcqCount,
+                    requestedCounts.theoryCount,
+                    requestedCounts.totalCount
+                  );
+                }
+
+                examData = mergeAndFitExamCounts(
+                  examData,
+                  null,
+                  requestedCounts.mcqCount,
+                  requestedCounts.theoryCount,
+                  requestedCounts.totalCount
+                );
+                examData.requestedFormats = [requestedExamFormat];
+                finalPayload = `\`\`\`exam\n${JSON.stringify(examData)}\n\`\`\``;
+              }
+            } else if (
+              requestedCounts.kind === "quiz" &&
+              requestedCounts.totalCount
+            ) {
+              let quizData = parseQuizData(pass1Raw);
+              if (quizData) {
+                ensureOpenedFence();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                  const missing = Math.max(
+                    0,
+                    requestedCounts.totalCount - quizData.questions.length
+                  );
+                  if (missing === 0) break;
+
+                  const existingStems = quizData.questions
+                    .map((q) => q.question.slice(0, 65))
+                    .slice(-20)
+                    .join(" | ");
+
+                  const topUpPrompt = `Generate ONLY ${missing} MORE unique multiple-choice quiz questions grounded in the document context.
+Do NOT repeat these existing questions: [${existingStems}].
+Return ONLY valid JSON inside \`\`\`quiz { "questions": [...] } \`\`\` with ZERO extra prose.`;
+
+                  const topUpRes = await createCompletionWithFallback({
+                    messages: [
+                      { role: "system" as const, content: systemPrompt },
+                      {
+                        role: "user" as const,
+                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
+                      },
+                    ],
+                    temperature: 0.2,
+                    max_tokens: Math.min(4500, Math.max(800, 300 + missing * 115)),
+                  }).catch(() => null);
+
+                  if (!topUpRes) break;
+                  const extraRaw = await readStreamToString(topUpRes.response);
+                  const extraQuiz = parseQuizData(extraRaw);
+                  if (!extraQuiz) break;
+                  quizData = mergeAndFitQuizCounts(
+                    quizData,
+                    extraQuiz,
+                    requestedCounts.totalCount
+                  );
+                }
+
+                quizData = mergeAndFitQuizCounts(
+                  quizData,
+                  null,
+                  requestedCounts.totalCount
+                );
+                finalPayload = `\`\`\`quiz\n${JSON.stringify(quizData)}\n\`\`\``;
+              }
+            } else if (
+              requestedCounts.kind === "flashcards" &&
+              requestedCounts.totalCount
+            ) {
+              let flashData = parseFlashcardsData(pass1Raw);
+              if (flashData) {
+                ensureOpenedFence();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                  const missing = Math.max(
+                    0,
+                    requestedCounts.totalCount - flashData.cards.length
+                  );
+                  if (missing === 0) break;
+
+                  const existingFronts = flashData.cards
+                    .map((c) => c.front.slice(0, 65))
+                    .slice(-20)
+                    .join(" | ");
+
+                  const topUpPrompt = `Generate ONLY ${missing} MORE unique active-recall flashcards grounded in the document context.
+Do NOT repeat these existing flashcards: [${existingFronts}].
+Return ONLY valid JSON inside \`\`\`flashcards { "cards": [...] } \`\`\` with ZERO extra prose.`;
+
+                  const topUpRes = await createCompletionWithFallback({
+                    messages: [
+                      { role: "system" as const, content: systemPrompt },
+                      {
+                        role: "user" as const,
+                        content: `DOCUMENT CONTEXT:\n${context || "No text available."}\n\n${topUpPrompt}`,
+                      },
+                    ],
+                    temperature: 0.2,
+                    max_tokens: Math.min(4200, Math.max(700, 250 + missing * 95)),
+                  }).catch(() => null);
+
+                  if (!topUpRes) break;
+                  const extraRaw = await readStreamToString(topUpRes.response);
+                  const extraFlash = parseFlashcardsData(extraRaw);
+                  if (!extraFlash) break;
+                  flashData = mergeAndFitFlashcardCounts(
+                    flashData,
+                    extraFlash,
+                    requestedCounts.totalCount
+                  );
+                }
+
+                flashData = mergeAndFitFlashcardCounts(
+                  flashData,
+                  null,
+                  requestedCounts.totalCount
+                );
+                finalPayload = `\`\`\`flashcards\n${JSON.stringify(flashData)}\n\`\`\``;
+              }
+            }
+
+            stopKeepalive();
+
+            const dbText =
+              autoSourcesFooter && !finalPayload.includes("Sources:")
+                ? `${finalPayload}${autoSourcesFooter}`
+                : finalPayload;
+
+            await db.message.create({
+              data: {
+                text: dbText,
+                isUserMessage: false,
+                fileId,
+                userId,
+              },
+            });
+
+            if (openedFence) {
+              const prefixRe = new RegExp(
+                `^\`\`\`${requestedCounts.kind}\\s*`,
+                "i"
+              );
+              const remainder = prefixRe.test(finalPayload)
+                ? finalPayload.replace(prefixRe, "")
+                : finalPayload;
+              const streamOut =
+                autoSourcesFooter && !remainder.includes("Sources:")
+                  ? `${remainder}${autoSourcesFooter}`
+                  : remainder;
+              controller.enqueue(encoder.encode(streamOut));
+            } else {
+              controller.enqueue(encoder.encode(dbText));
+            }
+            controller.close();
+          } catch (streamErr) {
+            stopKeepalive();
+            controller.error(streamErr);
+          }
+        },
+      });
+
+      const responseHeaders: Record<string, string> = {};
+      if (autoMultiDocInfo.isAutoMultiDoc) {
+        responseHeaders["X-Quill-Multi-Docs"] = activeFiles
+          .map((f: any) => f.id)
+          .join(",");
+        responseHeaders["X-Quill-Multi-Names"] = encodeURIComponent(
+          JSON.stringify(activeFiles.map((f: any) => f.name))
+        );
+      }
+
+      return new StreamingTextResponse(verifiedStream, {
+        headers: responseHeaders,
+      });
+    }
 
     const rawStream = OpenAIStream(response as any, {
       async onCompletion(completion) {
